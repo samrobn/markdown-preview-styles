@@ -1,0 +1,15 @@
+{
+  "name": "markdown-preview-styles",
+  "displayName": "Markdown Preview Styles (local)",
+  "description": "Personal CSS for VS Code's built-in markdown preview.",
+  "publisher": "local",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.50.0"
+  },
+  "contributes": {
+    "markdown.previewStyles": [
+      "./style.css"
+    ]
+  }
+}
