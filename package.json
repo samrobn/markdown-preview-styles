@@ -1,13 +1,24 @@
 {
   "name": "markdown-preview-styles",
   "displayName": "Markdown Preview Styles (local)",
-  "description": "Personal CSS for VS Code's built-in markdown preview.",
+  "description": "Personal CSS for VS Code's built-in markdown preview, plus an Obsidian-style frontmatter Properties table.",
   "publisher": "local",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.50.0"
   },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
   "contributes": {
+    "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "./style.css"
     ]

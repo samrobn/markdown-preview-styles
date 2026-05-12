@@ -3,3 +3,106 @@ body {
   max-width: 880px;
   margin-right: auto;
 }
+
+/* Frontmatter properties table (rendered by extension.js) */
+
+.mps-properties {
+  margin: 0 0 2em 0;
+  font-family: var(--vscode-font-family);
+  font-size: 0.92em;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  padding-bottom: 1em;
+}
+
+.mps-properties-title {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  opacity: 0.65;
+  margin-bottom: 0.4em;
+}
+
+.mps-properties-table {
+  border-collapse: collapse;
+  border: 0;
+  margin: 0;
+  width: 100%;
+}
+
+.mps-properties-table td {
+  border: 0;
+  padding: 0.2em 0.6em 0.2em 0;
+  vertical-align: middle;
+  background: transparent;
+}
+
+.mps-prop-key {
+  color: var(--vscode-descriptionForeground);
+  width: 180px;
+  min-width: 140px;
+  white-space: nowrap;
+  user-select: none;
+  font-weight: normal;
+}
+
+.mps-prop-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 0.5em;
+  vertical-align: middle;
+  opacity: 0.55;
+}
+
+.mps-prop-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.mps-prop-name {
+  vertical-align: middle;
+}
+
+.mps-prop-value {
+  color: var(--vscode-foreground);
+  word-break: break-word;
+}
+
+.mps-empty {
+  opacity: 0.4;
+  font-style: italic;
+}
+
+.mps-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+}
+
+.mps-pill {
+  display: inline-block;
+  padding: 0.05em 0.6em;
+  border-radius: 1em;
+  background: var(--vscode-badge-background, rgba(120, 120, 120, 0.22));
+  color: var(--vscode-badge-foreground, inherit);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.mps-date {
+  font-variant-numeric: tabular-nums;
+}
+
+.mps-check.on  { color: var(--vscode-charts-green, #4caf50); }
+.mps-check.off { opacity: 0.4; }
+
+.mps-properties-error {
+  margin: 0 0 1em 0;
+  padding: 0.5em 0.75em;
+  border-left: 3px solid var(--vscode-errorForeground, #f48771);
+  color: var(--vscode-errorForeground, #f48771);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+}
