@@ -4,6 +4,14 @@ body {
   margin-right: auto;
 }
 
+.markdown-body h1,
+.markdown-body h2,
+body h1,
+body h2 {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 /* Frontmatter properties table (rendered by extension.js) */
 
 .mps-properties {
@@ -93,6 +101,17 @@ body {
 
 .mps-date {
   font-variant-numeric: tabular-nums;
+}
+
+.mps-wiki-link {
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  opacity: 0.9;
+}
+
+.mps-prop-value a {
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
 }
 
 .mps-check.on  { color: var(--vscode-charts-green, #4caf50); }

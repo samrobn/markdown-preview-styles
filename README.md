@@ -15,7 +15,9 @@ The Properties table is rendered by a markdown-it plugin registered via `extendM
 
 **Implementation gotcha:** VS Code's preview calls `md.parse(src)` + `md.renderer.render(tokens, ...)` directly - it does NOT call `md.render(src)`. So wrapping or overriding `md.render` in `extendMarkdownIt` silently does nothing. Inject via `md.core.ruler.push(name, fn)`, `md.block.ruler.before(...)`, or `md.renderer.rules[type] = fn` - those sit inside the actual pipeline.
 
-Supported frontmatter shapes: top-level scalars (string, number, boolean, null, ISO date, ISO datetime), block-style string arrays (`tags:` followed by `  - foo`), and inline arrays (`tags: [foo, bar]`). Nested objects, multiline strings, anchors, and flow maps are not supported.
+Supported frontmatter shapes: top-level scalars (string, boolean, null, ISO date `YYYY-MM-DD`, ISO datetime `YYYY-MM-DDTHH:MM[...]`), block-style arrays (`tags:` followed by `  - foo`), and inline arrays (`tags: [foo, bar]`). Numeric-looking values stay as strings to preserve IDs like `task-id: 20260101`. Nested objects, multiline strings, anchors, and flow maps are not supported.
+
+Inside string values, `https://...` URLs become clickable links and `[[wiki-links]]` are styled (not yet linkable - no vault resolution). Date-only values are formatted without timezone shift so the day always matches what's in the YAML.
 
 Reference: https://code.visualstudio.com/api/extension-guides/markdown-extension
 
@@ -51,7 +53,14 @@ Minimum reload step by change type (verified empirically):
 
 No build step. No `node_modules`. No publishing.
 
+## Example
+
+`example.md` at the project root exercises every Properties-table feature in one file (every type, pill rendering, wiki-link, URL, date, datetime, empty value, flat headings). Open the preview with Cmd+K V to verify rendering after changes.
+
 ## Current rules
 
 - Caps preview width at 880px and left-aligns content (no centring).
-- Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / number / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
+- Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
+- Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
+- Auto-links `https://...` URLs and styles `[[wiki-links]]` in string values.
+- Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.

@@ -25,8 +25,6 @@ function parseScalar(raw) {
   if (s === '' || s === 'null' || s === '~') return null;
   if (s === 'true') return true;
   if (s === 'false') return false;
-  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
-  if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
   return unquote(s);
 }
 
@@ -62,6 +60,9 @@ function parseFrontmatter(text) {
       }
       out[key] = items.length > 0 ? items : null;
       i = items.length > 0 ? j : i + 1;
+    } else if (rawValue.startsWith('[[') && rawValue.endsWith(']]')) {
+      out[key] = parseScalar(rawValue);
+      i++;
     } else if (rawValue.startsWith('[') && rawValue.endsWith(']')) {
       const inner = rawValue.slice(1, -1).trim();
       out[key] = inner === '' ? [] : inner.split(',').map(s => parseScalar(s.trim()));
@@ -97,14 +98,24 @@ function detectType(key, value) {
 }
 
 function formatDate(value) {
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return escapeHtml(String(value));
+  const s = String(value);
+  const dateOnly = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return escapeHtml(s);
   const pad = n => String(n).padStart(2, '0');
   const dmy = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-  if (typeof value === 'string' && /T\d{2}:\d{2}/.test(value)) {
+  if (/T\d{2}:\d{2}/.test(s)) {
     return `${dmy}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   return dmy;
+}
+
+function renderText(value) {
+  let s = escapeHtml(String(value));
+  s = s.replace(/\[\[([^\]\n]+)\]\]/g, '<span class="mps-wiki-link">$1</span>');
+  s = s.replace(/https?:\/\/[^\s<>'"]+/g, url => `<a href="${url}">${url}</a>`);
+  return s;
 }
 
 function renderValue(value, type) {
@@ -115,7 +126,7 @@ function renderValue(value, type) {
     return `<div class="mps-pills">${value.map(v => `<span class="mps-pill">${escapeHtml(v)}</span>`).join('')}</div>`;
   }
   if (type === 'list') {
-    return value.map(v => escapeHtml(String(v))).join(', ');
+    return value.map(renderText).join(', ');
   }
   if (type === 'date' || type === 'datetime') {
     return `<span class="mps-date">${formatDate(value)}</span>`;
@@ -123,7 +134,7 @@ function renderValue(value, type) {
   if (type === 'checkbox') {
     return value ? '<span class="mps-check on">✓</span>' : '<span class="mps-check off">✗</span>';
   }
-  return escapeHtml(String(value));
+  return renderText(value);
 }
 
 function renderProperties(data) {
@@ -144,11 +155,13 @@ function activate() {
   return {
     extendMarkdownIt(md) {
       md.core.ruler.push('mps_frontmatter', function (state) {
-        const match = (state.src || '').match(FRONTMATTER_RE);
+        const src = (state.src || '').replace(/^﻿/, '').replace(/^\s+/, '');
+        const match = src.match(FRONTMATTER_RE);
         if (!match) return;
         let html;
         try {
           const data = parseFrontmatter(match[1]);
+          if (data['mps-hide'] === true) return;
           html = renderProperties(data);
         } catch (e) {
           html = `<div class="mps-properties-error">Failed to parse frontmatter: ${escapeHtml(e.message)}</div>`;
