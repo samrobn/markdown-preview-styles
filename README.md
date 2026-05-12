@@ -64,3 +64,7 @@ No build step. No `node_modules`. No publishing.
 - Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
 - Auto-links `https://...` URLs and styles `[[wiki-links]]` in string values.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
+
+## Known limitations
+
+- **Wiki-links and PARA refs (e.g. `[[TASK-…]]`, `parent: TASK-20260402-…`) are styled but not clickable.** Resolving them properly requires a workspace search (the referenced file is typically in a different folder from the source), which needs a command registration and async lookup. Out of scope for v1; revisit alongside other vault-aware features.
