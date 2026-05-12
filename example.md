@@ -52,4 +52,10 @@ Add `mps-hide: true` to a file's frontmatter to suppress the Properties table fo
 
 ## Inline checks
 
-URLs in body text are unaffected by this extension - markdown-it handles those: <https://example.com>. Wiki-links in body text are also unaffected: `[[these-stay-literal]]`.
+URLs in body text are handled by markdown-it: <https://example.com>.
+
+Wiki-links in body text get the same `.mps-wiki-link` styling as Properties values:
+
+**See**: [[related-document]] for background (one step → another step → final step).
+
+The version in backticks renders as literal text for contrast: `[[related-document]]`. Wiki-links are still not clickable.

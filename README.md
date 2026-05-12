@@ -17,7 +17,7 @@ The Properties table is rendered by a markdown-it plugin registered via `extendM
 
 Supported frontmatter shapes: top-level scalars (string, boolean, null, ISO date `YYYY-MM-DD`, ISO datetime `YYYY-MM-DDTHH:MM[...]`), block-style arrays (`tags:` followed by `  - foo`), and inline arrays (`tags: [foo, bar]`). Numeric-looking values stay as strings to preserve IDs like `task-id: 20260101`. Nested objects, multiline strings, anchors, and flow maps are not supported.
 
-Inside string values, `https://...` URLs become clickable links and `[[wiki-links]]` are styled (not yet linkable - no vault resolution). Date-only values are formatted without timezone shift so the day always matches what's in the YAML.
+Inside Properties string values, `https://...` URLs become clickable links. `[[wiki-links]]` are styled both inside Properties values and anywhere in the document body (via a markdown-it inline rule). Wiki-links are not yet clickable - no vault resolution. Date-only values are formatted without timezone shift so the day always matches what's in the YAML.
 
 Reference: https://code.visualstudio.com/api/extension-guides/markdown-extension
 
@@ -62,7 +62,8 @@ No build step. No `node_modules`. No publishing.
 - Caps preview width at 880px and left-aligns content (no centring).
 - Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
 - Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
-- Auto-links `https://...` URLs and styles `[[wiki-links]]` in string values.
+- Auto-links `https://...` URLs in Properties string values.
+- Styles `[[wiki-links]]` everywhere - in Properties values and in the document body. Not clickable (see Known limitations).
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
 
 ## Known limitations

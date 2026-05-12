@@ -154,6 +154,32 @@ function renderProperties(data) {
 function activate() {
   return {
     extendMarkdownIt(md) {
+      md.inline.ruler.before('link', 'mps_wikilink', function (state, silent) {
+        const src = state.src;
+        const start = state.pos;
+        if (src.charCodeAt(start) !== 0x5B /* [ */) return false;
+        if (src.charCodeAt(start + 1) !== 0x5B) return false;
+        const max = state.posMax;
+        let end = -1;
+        for (let i = start + 2; i < max - 1; i++) {
+          const c = src.charCodeAt(i);
+          if (c === 0x0A /* \n */) return false;
+          if (c === 0x5D /* ] */ && src.charCodeAt(i + 1) === 0x5D) { end = i; break; }
+        }
+        if (end < 0) return false;
+        const content = src.slice(start + 2, end);
+        if (!content) return false;
+        if (!silent) {
+          const token = state.push('mps_wikilink', '', 0);
+          token.content = content;
+        }
+        state.pos = end + 2;
+        return true;
+      });
+      md.renderer.rules.mps_wikilink = function (tokens, idx) {
+        return `<span class="mps-wiki-link">${escapeHtml(tokens[idx].content)}</span>`;
+      };
+
       md.core.ruler.push('mps_frontmatter', function (state) {
         const src = (state.src || '').replace(/^﻿/, '').replace(/^\s+/, '');
         const match = src.match(FRONTMATTER_RE);
