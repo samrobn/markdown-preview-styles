@@ -54,6 +54,12 @@ body :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, hr, table) {
   margin-bottom: 0;
 }
 
+/* Shrink inline code (backtick-quoted spans). Scoped to :not(pre) > code so
+   fenced code blocks (inside <pre>) keep their normal size. */
+:not(pre) > code {
+  font-size: 0.9em;
+}
+
 body .code-line:not(table .code-line)::before {
   content: attr(data-mps-line) !important;
   position: absolute !important;

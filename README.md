@@ -61,7 +61,10 @@ No build step. No `node_modules`. No publishing.
 
 - Caps preview width at 880px and left-aligns content (no centring).
 - Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
-- Suppresses VS Code's source-line hover indicator (the left-edge bar that appeared on hover) and replaces it with permanent line numbers in a 3.5em left gutter, sourced from `data-line` attributes that VS Code already emits on body blocks.
+- Suppresses VS Code's source-line hover indicator (the left-edge bar that appeared on hover) and replaces it with permanent line numbers in a 4em left gutter. Numbers are 1-indexed to match the editor's gutter; a core rule walks every token with a `.map` and sets `data-mps-line = map[0] + 1` (the original `data-line` is left intact so VS Code's double-click-to-jump source-mapping still works on its 0-indexed value).
+- Numbers also appear next to blank source lines, via injected placeholder `<div class="code-line mps-blank-line">` elements added by a markdown-it core rule that walks token `.map` ranges and fills the gaps. Each placeholder takes `1lh` of vertical space.
+- Default block margins on `p`, `h1-h6`, `ul`, `ol`, `blockquote`, `pre`, `hr`, `table` are zeroed (low-specificity via `:where()`) so vertical spacing comes primarily from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
+- Inline code (backtick-quoted spans) shrunk to `0.9em` so it sits more comfortably alongside body text. Fenced code blocks inside `<pre>` are untouched.
 - Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
 - Auto-links `https://...` URLs in Properties string values.
 - Styles `[[wiki-links]]` everywhere - in Properties values and in the document body. Not clickable (see Known limitations).
