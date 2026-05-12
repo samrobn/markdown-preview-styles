@@ -27,10 +27,23 @@ body {
   border-left-width: 0 !important;
   border-left-color: transparent !important;
   top: 50% !important;
+  bottom: auto !important;
+  height: auto !important;
   transform: translateY(-50%) !important;
   margin: 0 !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
+}
+
+/* Table rows are also tagged `.code-line` for VS Code's source-mapping,
+   so the hover ::before fires on <tr>. <tr> has no positioned context,
+   which makes the absolutely-positioned pseudo nudge cell borders. The
+   gutter line-number rule already skips table rows; kill the hover one
+   too. Scoped to descendants only - the <table> element itself keeps
+   its ::before because that's where its gutter line number lives. */
+body table .code-line:hover::before {
+  content: none !important;
+  display: none !important;
 }
 
 /* Placeholder rows injected for blank source lines so they get a number too.
@@ -91,6 +104,42 @@ body h1,
 body h2 {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+/* Body tables - bordered, header-shaded layout.
+   Scoped with :not(.mps-properties-table) so the frontmatter table keeps
+   its borderless presentation.
+
+   Uses `border-collapse: separate` + per-cell right/bottom borders rather
+   than `collapse`. With collapse, the seam between <thead> and <tbody>
+   can render heavier than seams within tbody (per-browser quirk). The
+   separate approach draws each border exactly once and stays pixel-uniform. */
+body table:not(.mps-properties-table) {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-top: 1px solid var(--vscode-editorWidget-border, rgba(255, 255, 255, 0.12));
+  border-left: 1px solid var(--vscode-editorWidget-border, rgba(255, 255, 255, 0.12));
+  font-size: 0.95em;
+}
+
+body table:not(.mps-properties-table) th,
+body table:not(.mps-properties-table) td {
+  border-right: 1px solid var(--vscode-editorWidget-border, rgba(255, 255, 255, 0.12));
+  border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(255, 255, 255, 0.12));
+  border-top: 0;
+  border-left: 0;
+  padding: 0.5em 0.85em;
+  vertical-align: top;
+  text-align: left;
+}
+
+body table:not(.mps-properties-table) th {
+  background: var(--vscode-editorWidget-background, rgba(255, 255, 255, 0.04));
+  font-weight: 600;
+}
+
+body table:not(.mps-properties-table) tbody tr {
+  background: transparent;
 }
 
 /* Frontmatter properties table (rendered by extension.js) */
