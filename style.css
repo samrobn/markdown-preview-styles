@@ -4,6 +4,60 @@ body {
   margin-right: auto;
 }
 
+/* Source-line gutter and hover suppression.
+   VS Code adds `.code-line` + `data-line="N"` to many body blocks
+   (including table rows and list items). On hover it shows a left
+   indicator inviting "jump to source line". We hide that and surface
+   always-visible line numbers in a left gutter, scoped to top-level
+   blocks and direct list items only - per-row numbers inside tables
+   would be cluttered. */
+
+body {
+  position: relative;
+  padding-left: 4em;
+  box-sizing: border-box;
+}
+
+/* VS Code's hover indicator lives on the `::before` pseudo, not the
+   element itself: `.vscode-dark.showEditorSelection .code-line:hover::before
+   { border-left: 3px solid rgba(255,255,255,0.6); }`. Strip it and lock
+   the positioning properties so the line number doesn't shift on hover. */
+.code-line:hover::before {
+  border-left: 0 !important;
+  border-left-width: 0 !important;
+  border-left-color: transparent !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  margin: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+body .code-line:not(table .code-line)::before {
+  content: attr(data-line) !important;
+  position: absolute !important;
+  left: -4em !important;
+  right: auto !important;
+  top: 50% !important;
+  bottom: auto !important;
+  height: auto !important;
+  transform: translateY(-50%) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  width: 3em;
+  padding-right: 1em;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, #858585);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.85rem;
+  font-weight: normal !important;
+  line-height: 1.6;
+  user-select: none;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 .markdown-body h1,
 .markdown-body h2,
 body h1,

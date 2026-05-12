@@ -61,6 +61,7 @@ No build step. No `node_modules`. No publishing.
 
 - Caps preview width at 880px and left-aligns content (no centring).
 - Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
+- Suppresses VS Code's source-line hover indicator (the left-edge bar that appeared on hover) and replaces it with permanent line numbers in a 3.5em left gutter, sourced from `data-line` attributes that VS Code already emits on body blocks.
 - Renders YAML frontmatter as a Properties table above the document, with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
 - Auto-links `https://...` URLs in Properties string values.
 - Styles `[[wiki-links]]` everywhere - in Properties values and in the document body. Not clickable (see Known limitations).
