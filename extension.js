@@ -180,6 +180,33 @@ function activate() {
         return `<span class="mps-wiki-link">${escapeHtml(tokens[idx].content)}</span>`;
       };
 
+      md.core.ruler.push('mps_blank_lines', function (state) {
+        const lines = (state.src || '').split(/\r?\n/);
+        const result = [];
+        let lastEnd = 0;
+        for (const token of state.tokens) {
+          if (token.map) {
+            token.attrSet('data-mps-line', String(token.map[0] + 1));
+          }
+          if (token.level === 0 && token.map) {
+            const [start, end] = token.map;
+            for (let n = lastEnd; n < start; n++) {
+              if ((lines[n] || '').trim() === '') {
+                const placeholder = new state.Token('html_block', '', 0);
+                placeholder.content = `<div class="code-line mps-blank-line" data-line="${n}" data-mps-line="${n + 1}"></div>\n`;
+                placeholder.map = [n, n + 1];
+                result.push(placeholder);
+              }
+            }
+            result.push(token);
+            lastEnd = end;
+          } else {
+            result.push(token);
+          }
+        }
+        state.tokens = result;
+      });
+
       md.core.ruler.push('mps_frontmatter', function (state) {
         const src = (state.src || '').replace(/^﻿/, '').replace(/^\s+/, '');
         const match = src.match(FRONTMATTER_RE);

@@ -33,8 +33,29 @@ body {
   padding-bottom: 0 !important;
 }
 
+/* Placeholder rows injected for blank source lines so they get a number too.
+   Each blank line takes one line-height of vertical space - approximating
+   the editor's one-row-per-source-line layout. */
+.mps-blank-line {
+  height: 1lh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  line-height: 1;
+}
+
+/* Suppress default block margins on body content so vertical spacing comes
+   primarily from blank-line placeholders. Without this, block margins
+   stack on top of placeholder height and the preview gets significantly
+   taller than the editor view. Uses :where() for low specificity so other
+   rules in this file (or downstream) can still override. */
+body :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, hr, table) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 body .code-line:not(table .code-line)::before {
-  content: attr(data-line) !important;
+  content: attr(data-mps-line) !important;
   position: absolute !important;
   left: -4em !important;
   right: auto !important;
@@ -50,8 +71,8 @@ body .code-line:not(table .code-line)::before {
   text-align: right;
   color: var(--vscode-editorLineNumber-foreground, #858585);
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-  font-size: 0.85rem;
-  font-weight: normal !important;
+  font-size: 0.8rem;
+  font-weight: 300 !important;
   line-height: 1.6;
   user-select: none;
   pointer-events: none;
