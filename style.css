@@ -76,7 +76,11 @@ body :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, hr, table) {
 body .code-line:not(table .code-line)::before {
   content: attr(data-mps-line) !important;
   position: absolute !important;
-  left: -5em !important;
+  /* `--mps-before-left` is set per-element by preview.js (runs in the
+     webview) to give pixel-aligned gutter numbers regardless of list
+     nesting. If the script hasn't run yet, fall back to the static -5em /
+     per-depth-attribute overrides further down. */
+  left: var(--mps-before-left, -5em) !important;
   right: auto !important;
   top: 50% !important;
   bottom: auto !important;
@@ -96,6 +100,50 @@ body .code-line:not(table .code-line)::before {
   user-select: none;
   pointer-events: none;
   opacity: 0.55;
+}
+
+/* Nested list compensation. extension.js emits `data-mps-list-depth` on
+   ul/ol/li tokens (= number of ul/ol ancestors). Each level pushes the
+   element right by the browser's ul padding-inline-start (~2.5em default,
+   though VS Code's preview seems closer to 2em with extra spacing). Shift
+   the gutter offset left to compensate so the line number stays in the
+   gutter at every depth. Tune the per-level step if numbers drift. */
+/* Static fallback per nesting depth, used until preview.js runs and sets
+   --mps-before-left precisely. Each per-depth rule has higher specificity
+   than the base, but consuming var() means the JS-injected value still
+   wins once it lands. */
+body .code-line[data-mps-list-depth="2"]:not(table .code-line)::before {
+  left: var(--mps-before-left, -10em) !important;
+}
+body .code-line[data-mps-list-depth="3"]:not(table .code-line)::before {
+  left: var(--mps-before-left, -15em) !important;
+}
+body .code-line[data-mps-list-depth="4"]:not(table .code-line)::before {
+  left: var(--mps-before-left, -20em) !important;
+}
+body .code-line[data-mps-list-depth="5"]:not(table .code-line)::before {
+  left: var(--mps-before-left, -25em) !important;
+}
+
+/* Suppress duplicate line numbers on list containers. A nested <ul> opens
+   on the same source line as its first <li>, so both carry the same
+   data-mps-line - rendering both produces a visible overlap. The <li>'s
+   number is the useful one (the <ul>'s is purely structural). */
+body ul.code-line::before,
+body ol.code-line::before {
+  display: none !important;
+}
+
+/* When a .code-line contains other .code-lines (e.g. a top-level <li> that
+   wraps a nested <ul>), its rendered box spans both its own text AND the
+   children. `top: 50%` would centre the line number over the whole tall
+   box, dropping it down into the nested content area. Anchor to the top
+   instead so the number lines up with the parent's own first row. */
+body .code-line:has(.code-line):not(table .code-line)::before,
+body .code-line:has(.code-line):not(table .code-line):hover::before {
+  top: 0.3em !important;
+  bottom: auto !important;
+  transform: none !important;
 }
 
 .markdown-body h1,

@@ -21,7 +21,7 @@ node test/visual/render.js check  # + computed-style assertions via agent-browse
 
 No build step at the top level. No `node_modules` in repo root. No publish step. Exits non-zero on test failure - safe to wire into a pre-commit hook.
 
-Unit tests use a stub markdown-it (no real markdown-it dependency) and cover the public `extendMarkdownIt()` surface: frontmatter parsing (numeric IDs stay strings, BOM/whitespace stripped, `[[wiki-link]]` disambiguated from `[inline, array]`, `mps-hide: true` opt-out), value rendering (URLs, wiki-links, dates, HTML escaping), and the line-number core rules (1-indexed `data-mps-line`, blank-line placeholder injection).
+Unit tests use a stub markdown-it (no real markdown-it dependency) and cover the public `extendMarkdownIt()` surface: frontmatter parsing (numeric IDs stay strings, BOM/whitespace stripped, `[[wiki-link]]` disambiguated from `[inline, array]`, `mps-hide: true` opt-out), value rendering (URLs, wiki-links, dates, HTML escaping), the line-number core rules (1-indexed `data-mps-line`, blank-line placeholder injection), and `data-mps-list-depth` tracking on list tokens.
 
 The visual harness in `test/visual/` runs real markdown-it + our plugin + VS Code's `pluginSourceMap` (copied verbatim from upstream) to produce a faithful DOM clone of the preview. Use it when a CSS/DOM bug needs verification outside VS Code's closed webview - `agent-browser` can attach and report computed styles. It's the only way to distinguish "our CSS is wrong" from "VS Code is serving cached CSS" without manual webview devtools. Test-only dev deps live under `test/visual/` (gitignored `node_modules/`); the repo root stays dependency-free.
 
@@ -31,6 +31,7 @@ The visual harness in `test/visual/` runs real markdown-it + our plugin + VS Cod
 |---------------------------------------------------|------------------------------------------------------|
 | `extension.js`                                    | Disable + re-enable extension (Extensions sidebar)   |
 | `style.css`                                       | Close + reopen the preview tab                       |
+| `preview.js`                                      | Close + reopen the preview tab                       |
 | `package.json` (contributes/capabilities/main)    | Full Cmd+Q and relaunch                              |
 | Version bump in `package.json`                    | Rename symlink folder to match, then Cmd+Q           |
 
@@ -54,6 +55,22 @@ VS Code's source-line hover bar is `.vscode-dark.showEditorSelection .code-line:
 ### The hover `::before` stretches vertically
 
 On hover, VS Code also sets `bottom: 0` on the same `::before`, which (combined with our `top: 50%`) makes the box stretch to ~50% of parent height. With `transform: translateY(-50%)`, the centre point shifts and absolutely-positioned content jumps. Lock `bottom: auto; height: auto` on the `::before` to prevent this.
+
+### Nested list line numbers need per-element measurement, not static CSS
+
+VS Code sets `position: relative` on every `.code-line` (so its hover indicator's `::before` can position itself). Each `<li>` is its own containing block, so the base `left: -5em` on the line-number `::before` is taken from that li's left edge - not from body. Nested items are indented by their parent `<ul>`'s `padding-inline-start`, so the line number drifts into the content area at each nesting level.
+
+What didn't work:
+
+- **CSS anchor positioning** (`anchor-name` on body, `left: anchor(--mps-body left)` on `::before`) silently fails in VS Code's webview - the call resolves to `auto`. Don't go back to it without verifying support in the target Electron build first.
+- **Static per-depth `em` overrides** (`.code-line[data-mps-list-depth="N"]::before { left: -Xem }`) get close but never pixel-aligned, because the preview's effective `padding-inline-start` varies by theme, user font size, and Electron build. Iteration converges slowly and is fragile.
+
+Working fix: `preview.js` runs in the webview (contributed via `markdown.previewScripts`), reads each `.code-line`'s `offsetLeft` at render time, and sets `--mps-before-left: <px>` on the element. `style.css` consumes it via `left: var(--mps-before-left, <static-fallback>) !important`. Static fallbacks per `data-mps-list-depth` cover the brief window before the script runs. The `extension.js` core rule still emits `data-mps-list-depth` so the fallbacks have something to bind to.
+
+Two follow-on cleanups the live measurement made necessary:
+
+- **Suppress `::before` on `<ul>`/`<ol>` containers.** A nested `<ul>` opens on the same source line as its first `<li>`, so both carry the same `data-mps-line` and render duplicate, overlapping numbers. The `<li>`'s number is the useful one.
+- **For `.code-line` elements that contain other `.code-line` elements** (typically an `<li>` wrapping a nested `<ul>`), anchor the line number to the top of the element instead of vertical-centre - otherwise the number drops down into the middle of the nested content. CSS uses `:has(.code-line)` + `top: 0.3em; transform: none`.
 
 ### Line numbers are 0-indexed in markdown-it
 
@@ -81,6 +98,7 @@ In this VS Code build, `console.log` does not appear in the `Log (Extension Host
 
 - `extension.js` - `activate()` + `extendMarkdownIt(md)`. Two core rules (`mps_blank_lines`, `mps_frontmatter`), one inline rule (`mps_wikilink`) and its renderer.
 - `style.css` - all CSS contributed via `markdown.previewStyles`. Line-number gutter, hover-indicator suppression, Properties table, heading and inline-code tweaks.
+- `preview.js` - contributed via `markdown.previewScripts`, runs in the webview. Measures each `.code-line`'s `offsetLeft` and sets `--mps-before-left` so the line-number gutter aligns at every nesting depth.
 - `example.md` - exercises every feature; preview to visually verify changes.
 - `test/test.js` - assertions against a stub markdown-it (no real markdown-it dep). Run via `node test/test.js`.
 - `package.json` - manifest. Contributes `markdown.markdownItPlugins: true` and `markdown.previewStyles: ["./style.css"]`. `capabilities.untrustedWorkspaces.supported: true` so the extension runs in restricted-mode workspaces.

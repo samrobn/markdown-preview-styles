@@ -184,9 +184,23 @@ function activate() {
         const lines = (state.src || '').split(/\r?\n/);
         const result = [];
         let lastEnd = 0;
+        let listDepth = 0;
         for (const token of state.tokens) {
           if (token.map) {
             token.attrSet('data-mps-line', String(token.map[0] + 1));
+          }
+          // List nesting depth = count of ul/ol ancestors. Used by style.css
+          // to shift the line-number gutter left for nested items, because
+          // VS Code's `.code-line { position: relative }` makes each nested
+          // li its own containing block. Set BEFORE incrementing so a
+          // bullet_list_open at depth 0 records 0, then nested items see 1+.
+          if (token.type === 'bullet_list_open' || token.type === 'ordered_list_open') {
+            token.attrSet('data-mps-list-depth', String(listDepth));
+            listDepth++;
+          } else if (token.type === 'bullet_list_close' || token.type === 'ordered_list_close') {
+            listDepth--;
+          } else if (token.type === 'list_item_open') {
+            token.attrSet('data-mps-list-depth', String(listDepth));
           }
           if (token.level === 0 && token.map) {
             const [start, end] = token.map;

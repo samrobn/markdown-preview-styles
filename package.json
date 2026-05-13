@@ -21,6 +21,9 @@
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "./style.css"
+    ],
+    "markdown.previewScripts": [
+      "./preview.js"
     ]
   }
 }

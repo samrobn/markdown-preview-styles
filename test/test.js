@@ -240,6 +240,36 @@ test('non-blank lines between tokens do NOT get placeholders', () => {
   assert.strictEqual(placeholders.length, 0);
 });
 
+test('list tokens get data-mps-list-depth = number of ul/ol ancestors', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  // Simulate nested list token stream:
+  //   <ul>           bullet_list_open  (depth 0)
+  //     <li>           list_item_open  (depth 1)
+  //       <ul>           bullet_list_open  (depth 1)
+  //         <li>           list_item_open  (depth 2)
+  //         </li>          list_item_close
+  //       </ul>          bullet_list_close
+  //     </li>          list_item_close
+  //   </ul>          bullet_list_close
+  const tokens = [
+    makeToken({ type: 'bullet_list_open', map: [0, 4] }),
+    makeToken({ type: 'list_item_open', map: [0, 4] }),
+    makeToken({ type: 'bullet_list_open', map: [1, 3] }),
+    makeToken({ type: 'list_item_open', map: [1, 2] }),
+    makeToken({ type: 'list_item_close' }),
+    makeToken({ type: 'bullet_list_close' }),
+    makeToken({ type: 'list_item_close' }),
+    makeToken({ type: 'bullet_list_close' }),
+  ];
+  md.runCore('a\n  b\n', tokens);
+  const depth = t => (t.attrs || []).find(a => a[0] === 'data-mps-list-depth');
+  assert.strictEqual(depth(tokens[0])[1], '0', 'outer ul: depth 0');
+  assert.strictEqual(depth(tokens[1])[1], '1', 'outer li: depth 1');
+  assert.strictEqual(depth(tokens[2])[1], '1', 'nested ul: depth 1');
+  assert.strictEqual(depth(tokens[3])[1], '2', 'nested li: depth 2');
+});
+
 test('no leading placeholders before the first token (frontmatter lines are skipped)', () => {
   const md = makeMd();
   activate().extendMarkdownIt(md);

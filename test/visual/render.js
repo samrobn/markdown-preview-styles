@@ -55,6 +55,7 @@ function render(srcPath) {
   const src = fs.readFileSync(srcPath, 'utf8');
   const body = md.render(src);
   const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  const previewJs = fs.readFileSync(path.join(ROOT, 'preview.js'), 'utf8');
   // Approximate VS Code preview defaults: dark background, sensible body
   // padding so absolute-positioned gutter ::before's aren't clipped at x=0.
   const html = `<!doctype html>
@@ -65,6 +66,7 @@ ul, ol { padding-inline-start: 30px; }
 </style></head>
 <body class="vscode-dark">
 ${body}
+<script>${previewJs}</script>
 </body></html>`;
   const out = path.join(__dirname, 'out.html');
   fs.writeFileSync(out, html);
