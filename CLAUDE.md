@@ -14,12 +14,16 @@ Never published. Installed by symlinking the repo into `~/.vscode/extensions/loc
 ## Commands
 
 ```bash
-node test/test.js   # plain Node assertions, no framework, no node_modules
+node test/test.js              # unit tests - plain Node, no framework, no node_modules
+node test/visual/render.js     # render example.md to test/visual/out.html
+node test/visual/render.js check  # + computed-style assertions via agent-browser
 ```
 
-No build step. No `node_modules`. No publish step. Exits non-zero on test failure - safe to wire into a pre-commit hook.
+No build step at the top level. No `node_modules` in repo root. No publish step. Exits non-zero on test failure - safe to wire into a pre-commit hook.
 
-Tests use a stub markdown-it (no real markdown-it dependency) and cover the public `extendMarkdownIt()` surface: frontmatter parsing (numeric IDs stay strings, BOM/whitespace stripped, `[[wiki-link]]` disambiguated from `[inline, array]`, `mps-hide: true` opt-out), value rendering (URLs, wiki-links, dates, HTML escaping), and the line-number core rules (1-indexed `data-mps-line`, blank-line placeholder injection). They do NOT cover CSS, the inline rule's parser half (only its renderer), or end-to-end VS Code integration - that all needs visual verification via the preview.
+Unit tests use a stub markdown-it (no real markdown-it dependency) and cover the public `extendMarkdownIt()` surface: frontmatter parsing (numeric IDs stay strings, BOM/whitespace stripped, `[[wiki-link]]` disambiguated from `[inline, array]`, `mps-hide: true` opt-out), value rendering (URLs, wiki-links, dates, HTML escaping), and the line-number core rules (1-indexed `data-mps-line`, blank-line placeholder injection).
+
+The visual harness in `test/visual/` runs real markdown-it + our plugin + VS Code's `pluginSourceMap` (copied verbatim from upstream) to produce a faithful DOM clone of the preview. Use it when a CSS/DOM bug needs verification outside VS Code's closed webview - `agent-browser` can attach and report computed styles. It's the only way to distinguish "our CSS is wrong" from "VS Code is serving cached CSS" without manual webview devtools. Test-only dev deps live under `test/visual/` (gitignored `node_modules/`); the repo root stays dependency-free.
 
 ## Reload after a change
 

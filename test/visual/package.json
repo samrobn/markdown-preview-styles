@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Dev-only deps for visual verification of the markdown preview. Not shipped.",
+  "devDependencies": {
+    "markdown-it": "^14.0.0"
+  }
+}
