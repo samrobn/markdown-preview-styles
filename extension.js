@@ -213,7 +213,16 @@ function activate() {
               }
             }
             result.push(token);
-            lastEnd = end;
+            // markdown-it's `bullet_list_open.map[1]` can overshoot past the
+            // list's last content line and into trailing blank lines (the
+            // list "consumes" its terminator). Don't let those blanks get
+            // absorbed - trim them so the next iteration's gap check still
+            // sees them and emits a placeholder for each.
+            let actualEnd = end;
+            while (actualEnd > start && (lines[actualEnd - 1] || '').trim() === '') {
+              actualEnd--;
+            }
+            lastEnd = actualEnd;
           } else {
             result.push(token);
           }

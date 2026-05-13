@@ -240,6 +240,33 @@ test('non-blank lines between tokens do NOT get placeholders', () => {
   assert.strictEqual(placeholders.length, 0);
 });
 
+test('blank line absorbed by previous list token still gets a placeholder', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  // Source:
+  //   line 0: "- a"           (list_item content)
+  //   line 1: ""              (blank — list consumes this in its map.end)
+  //   line 2: "next"          (paragraph after the list)
+  // bullet_list_open.map = [0, 2] (end overshoots into the blank line).
+  // paragraph_open.map = [2, 3].
+  // Without trimming trailing blanks off the previous token's end, the
+  // gap check at the paragraph sees range [2,2) and skips line 1.
+  const tokens = [
+    makeToken({ type: 'bullet_list_open', map: [0, 2] }),
+    makeToken({ type: 'list_item_open', map: [0, 1] }),
+    makeToken({ type: 'list_item_close' }),
+    makeToken({ type: 'bullet_list_close' }),
+    makeToken({ type: 'paragraph_open', map: [2, 3] }),
+  ];
+  const state = md.runCore('- a\n\nnext', tokens);
+  const placeholders = state.tokens.filter(
+    t => typeof t.content === 'string' && t.content.includes('mps-blank-line')
+  );
+  assert.strictEqual(placeholders.length, 1, 'expected one placeholder for the absorbed blank');
+  assert.match(placeholders[0].content, /data-line="1"/);
+  assert.match(placeholders[0].content, /data-mps-line="2"/);
+});
+
 test('list tokens get data-mps-list-depth = number of ul/ol ancestors', () => {
   const md = makeMd();
   activate().extendMarkdownIt(md);
