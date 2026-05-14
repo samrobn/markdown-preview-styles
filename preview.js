@@ -41,23 +41,44 @@
       // ::before is absolute-positioned in el's coord space, so:
       //   ::before.left = target - el.left
       const beforeLeft = (bodyContentLeft + GUTTER_TARGET) - x;
-      el.style.setProperty('--mps-before-left', `${beforeLeft}px`);
+      const value = `${beforeLeft}px`;
+      // Idempotent write: skip if unchanged. Without this, every align()
+      // rewrites the style attribute on every .code-line, which the
+      // attribute-watching MutationObserver below would treat as a change
+      // and schedule another align() - frame-by-frame feedback loop.
+      if (el.style.getPropertyValue('--mps-before-left') !== value) {
+        el.style.setProperty('--mps-before-left', value);
+      }
     }
   }
 
-  // Run on initial load and any time the preview re-flows. VS Code triggers
-  // a 'vscode.markdown.updateContent' event; also listen to load + resize as
-  // safety nets.
-  function schedule() { requestAnimationFrame(align); }
+  // Run on initial load and any time the preview re-flows.
+  let scheduled = false;
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => { scheduled = false; align(); });
+  }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', schedule);
   } else {
     schedule();
   }
   window.addEventListener('resize', schedule);
-  // Mutation observer catches preview re-renders without a full load.
+  // Mutation observer catches preview re-renders.
+  //
+  // VS Code's "Open Preview to the Side" applies edits via an in-place DOM
+  // diff (not a full innerHTML replace). When only attributes or text node
+  // contents change, a `childList` observer doesn't fire - so we'd miss the
+  // update and our per-element --mps-before-left values would become stale
+  // (or get wiped by the diff and fall back to the static -5em, which is
+  // mis-sized at the preview's 14px root). Watch attributes + characterData
+  // too. The idempotent write in align() keeps this from looping.
   new MutationObserver(schedule).observe(document.body || document.documentElement, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class', 'data-line', 'data-mps-line'],
+    characterData: true,
   });
 })();

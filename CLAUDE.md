@@ -100,6 +100,12 @@ The absolute pixel value depends on root font-size:
 
 The static fallback `-5em` in style.css therefore matches `GUTTER_TARGET = -64px` only in the harness, not in the live preview. Any `.code-line` element that doesn't get `--mps-before-left` written by preview.js will visibly drift right by ~8px in the actual preview. Keep preview.js's skip list minimal - the table-skip rule already uses `el.tagName !== 'TABLE' && el.closest('table')` so the `<table>` itself is measured.
 
+### Preview-to-the-side edits are an in-place DOM diff, not a re-render
+
+When the preview pane is open beside the editor and the user types, VS Code applies the new HTML as an in-place diff to the existing DOM. Many updates change only attributes or text-node contents without inserting or removing any elements - so a `childList`-only MutationObserver misses them. The symptom: line numbers misalign after any edit (before and after save) because preview.js never re-runs and `--mps-before-left` either becomes stale (layout shifted) or gets cleared by the diff (CSS fallback `-5em` takes over, ~8px off in the live preview - see previous gotcha).
+
+Fix: observe `attributes` (filtered to `style`, `class`, `data-line`, `data-mps-line`) and `characterData` in addition to `childList`. With attribute observation, every `setProperty` we make would fire the observer and schedule another align - a frame-by-frame loop. Guard against it with **idempotent writes**: read the current `--mps-before-left` and skip `setProperty` when unchanged. A `scheduled` flag around `requestAnimationFrame` coalesces N mutation records into one align call per frame.
+
 ## Project conventions
 
 - **No runtime dependencies.** The in-tree `parseFrontmatter` is intentional - it covers Obsidian-shaped frontmatter (top-level scalars, block/inline string arrays). Do not propose adding `js-yaml` without an explicit conversation. Test-only dev deps in `test/` would be acceptable if the gap matters.
