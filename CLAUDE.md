@@ -80,9 +80,19 @@ Two follow-on cleanups the live measurement made necessary:
 
 Blank lines aren't blocks, so markdown-it emits no tokens for them. The `mps_blank_lines` core rule walks tokens with `.map`, finds gaps, and injects `<div class="code-line mps-blank-line" data-line="N" data-mps-line="N+1">` html_block tokens for each blank source line. Default block margins on `p`, `h1-h6`, `ul`, `ol`, etc. are zeroed (low-specificity via `:where()`) so vertical spacing comes primarily from these placeholders.
 
+`bullet_list_open.map[1]` overshoots past the list's last content line into the blank line that terminates the list - markdown-it treats that blank as part of the list. Without intervention, the gap-check loop's `lastEnd = end` skips over it and no placeholder renders, producing a smaller visible gap between the list and the next block than between any other two top-level blocks. The rule trims trailing blanks off each top-level token's `map.end` before advancing `lastEnd`.
+
 ### `console.log` from extension code doesn't surface here
 
 In this VS Code build, `console.log` does not appear in the `Log (Extension Host)` Output channel even though `activate()` and `extendMarkdownIt()` are clearly running. For diagnostics, write to `/tmp/mps-trace.log` via `fs.appendFileSync`, or use `vscode.window.showInformationMessage()` for unmissable toasts. Webview DevTools is available via Command Palette → **Developer: Open Webview Developer Tools** for inspecting preview CSS / DOM.
+
+### The webview doesn't expose CDP
+
+VS Code's renderer process isn't launched with `--remote-debugging-port`, so `agent-browser connect` has nothing to attach to. For headless DOM/computed-style inspection use `test/visual/` (it runs real markdown-it + our plugin + the verbatim `pluginSourceMap`); for the live preview, either open Webview DevTools via the Command Palette, or temporarily wrap `md.renderer.render` to write the rendered HTML to disk. Computer-use can drive VS Code's UI (tier "click") for forced reloads.
+
+### `em` on `::before` resolves against the pseudo's own font-size
+
+`::before` carries `font-size: 0.8rem` so `1em` in its `left` / `width` / `padding-right` is `0.8rem` (≈12.8px at the default 16px root), NOT the parent's 1em. So `left: -5em` is -64px from the parent .code-line's left, not -80px. Easy to miscalculate when triangulating gutter offsets from pixel measurements - convert through the 12.8px-per-em factor, not 16px.
 
 ## Project conventions
 

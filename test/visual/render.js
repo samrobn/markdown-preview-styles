@@ -73,9 +73,11 @@ ${body}
   return out;
 }
 
-// Assertions executed inside the page via agent-browser eval. Each asserts
-// the gutter line number lands inside body's left padding (the gutter),
-// not in the content area. Returns { pass, fail, details }.
+// Assertions executed inside the page via agent-browser eval.
+// 1) Gutter line numbers land inside body's left padding at every depth.
+// 2) <ul>/<ol> ::before is suppressed (duplicate-number prevention).
+// 3) A parent <li> containing a nested .code-line anchors its ::before
+//    to the top of its own row, not the centre of the whole tall box.
 const PAGE_ASSERTIONS = `(() => {
   const results = [];
   const gutterMax = parseFloat(getComputedStyle(document.body).paddingLeft);
@@ -93,6 +95,34 @@ const PAGE_ASSERTIONS = `(() => {
   results.push(sample('li.code-line[data-mps-list-depth="1"]', 'top-level li'));
   results.push(sample('li.code-line[data-mps-list-depth="2"]', 'nested li'));
   results.push(sample('li.code-line[data-mps-list-depth="3"]', 'doubly-nested li'));
+
+  // ul/ol ::before suppression
+  const ulEl = document.querySelector('ul.code-line');
+  results.push({
+    label: 'ul ::before display:none',
+    ok: ulEl && getComputedStyle(ulEl, '::before').display === 'none',
+    actual: ulEl ? getComputedStyle(ulEl, '::before').display : 'no ul.code-line',
+  });
+
+  // Parent <li> with nested .code-line should NOT have ::before vertically
+  // centred. Top value should not be 50%/half-the-height; anchored to top
+  // means the resolved 'top' is small (a few px / 0.3em).
+  const parentLi = document.querySelector('li.code-line:has(.code-line)');
+  if (parentLi) {
+    const top = parseFloat(getComputedStyle(parentLi, '::before').top);
+    const liHeight = parentLi.getBoundingClientRect().height;
+    // If anchored top, top is small relative to li height (well under 25%).
+    // If centred, top is roughly half the li's height.
+    const isAnchoredTop = top < liHeight * 0.25;
+    results.push({
+      label: 'parent-li ::before anchored to top',
+      ok: isAnchoredTop,
+      top, liHeight,
+    });
+  } else {
+    results.push({ label: 'parent-li ::before anchored to top', ok: false, reason: 'no parent li.code-line with nested .code-line found' });
+  }
+
   return JSON.stringify(results);
 })()`;
 
@@ -104,10 +134,18 @@ function check(outPath) {
   const raw = execSync(`agent-browser eval --base64 ${b64}`).toString();
   const results = JSON.parse(JSON.parse(raw));
   let pass = 0, fail = 0;
-  console.log('\nLine-number gutter assertions:');
+  console.log('\nVisual assertions:');
   for (const r of results) {
     const status = r.ok ? 'PASS' : 'FAIL';
-    console.log(`  ${status}  ${r.label}: beforeX=${r.beforeX}, gutterMax=${r.gutterMax}, content=${r.content}`);
+    // Different assertions surface different fields - show whichever's present.
+    const detail = r.beforeX !== undefined
+      ? `beforeX=${r.beforeX}, content=${r.content}`
+      : r.actual !== undefined
+        ? `actual=${r.actual}`
+        : r.top !== undefined
+          ? `top=${r.top}, liHeight=${r.liHeight}`
+          : (r.reason || '');
+    console.log(`  ${status}  ${r.label}: ${detail}`);
     r.ok ? pass++ : fail++;
   }
   console.log(`\n${pass} pass, ${fail} fail`);
