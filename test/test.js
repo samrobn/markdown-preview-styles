@@ -311,6 +311,95 @@ test('no leading placeholders before the first token (frontmatter lines are skip
   assert.match(placeholders[0].content, /data-mps-line="4"/);
 });
 
+// ---- Callouts ---------------------------------------------------------------
+
+console.log('\nCallouts:');
+
+function makeInline(content) {
+  return makeToken({ type: 'inline', tag: '', content });
+}
+
+function calloutTokens(inlineContent) {
+  // Minimal token stream representing one callout blockquote with a single
+  // paragraph inside. Mirrors what markdown-it emits before our rule runs.
+  return [
+    makeToken({ type: 'blockquote_open', tag: 'blockquote', map: [0, 1] }),
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline(inlineContent),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+    makeToken({ type: 'blockquote_close', tag: 'blockquote' }),
+  ];
+}
+
+function getAttr(token, name) {
+  return (token.attrs || []).find(a => a[0] === name)?.[1];
+}
+
+test('blockquote starting with [!type] gets rewritten to a div callout', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('[!note] Default note\nbody text');
+  md.runCore('', tokens);
+  assert.strictEqual(tokens[0].tag, 'div', 'open tag becomes div');
+  assert.strictEqual(tokens[tokens.length - 1].tag, 'div', 'close tag becomes div');
+  assert.match(getAttr(tokens[0], 'class') || '', /mps-callout mps-callout-note/);
+  assert.strictEqual(getAttr(tokens[0], 'data-mps-callout-type'), 'note');
+});
+
+test('first paragraph becomes a title row with just the title text', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('[!warning] Watch out\nbody text');
+  md.runCore('', tokens);
+  assert.strictEqual(tokens[1].tag, 'div', 'paragraph_open tag becomes div');
+  assert.match(getAttr(tokens[1], 'class') || '', /mps-callout-title/);
+  assert.strictEqual(tokens[2].content, 'Watch out', 'inline content is title-only');
+});
+
+test('body sharing the title paragraph is spliced into its own paragraph', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('[!info] Title here\nfirst body line');
+  md.runCore('', tokens);
+  // After: blockquote_open, paragraph_open(title), inline(title), paragraph_close,
+  //        paragraph_open(body), inline(body), paragraph_close, blockquote_close
+  const types = tokens.map(t => t.type);
+  assert.deepStrictEqual(types, [
+    'blockquote_open', 'paragraph_open', 'inline', 'paragraph_close',
+    'paragraph_open', 'inline', 'paragraph_close', 'blockquote_close'
+  ]);
+  assert.strictEqual(tokens[5].content, 'first body line');
+});
+
+test('blockquote without [!type] prefix is left alone', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('plain blockquote text');
+  md.runCore('', tokens);
+  assert.strictEqual(tokens[0].tag, 'blockquote');
+  assert.strictEqual((tokens[0].attrs || []).length, 1, 'only data-mps-line should be set');
+});
+
+test('no custom title falls back to the type name capitalized', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('[!warning]\nbody only');
+  md.runCore('', tokens);
+  assert.strictEqual(tokens[2].content, 'Warning');
+});
+
+test('fold suffix records the initial expanded/collapsed state', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const expanded = calloutTokens('[!info]+ open by default');
+  md.runCore('', expanded);
+  assert.strictEqual(getAttr(expanded[0], 'data-mps-callout-fold'), 'open');
+
+  const collapsed = calloutTokens('[!info]- closed by default');
+  md.runCore('', collapsed);
+  assert.strictEqual(getAttr(collapsed[0], 'data-mps-callout-fold'), 'closed');
+});
+
 // ---- Summary ----------------------------------------------------------------
 
 console.log(`\n${passed} pass, ${failed} fail`);

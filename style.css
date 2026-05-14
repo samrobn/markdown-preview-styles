@@ -158,6 +158,93 @@ body h2 {
   padding-bottom: 0;
 }
 
+/* Obsidian-style callouts. extension.js rewrites blockquotes starting with
+   `[!type]` into `<div class="mps-callout mps-callout-{type}">` containing a
+   `<div class="mps-callout-title">` and one or more body blocks. The default
+   blockquote styling no longer applies (it's a div), so we re-establish the
+   box here. */
+/* One RGB triple per callout type drives all three accent surfaces: the
+   left border, the title text, and a low-alpha tint of the same hue for
+   the background. Default falls back to a neutral gray when the type
+   class isn't recognised. */
+body .mps-callout                  { --mps-callout-rgb: 140, 140, 140; }
+body .mps-callout-note             { --mps-callout-rgb:  86, 156, 214; }
+body .mps-callout-abstract,
+body .mps-callout-summary,
+body .mps-callout-tldr             { --mps-callout-rgb:   0, 175, 175; }
+body .mps-callout-info             { --mps-callout-rgb:   0, 175, 220; }
+body .mps-callout-todo             { --mps-callout-rgb:  86, 156, 214; }
+body .mps-callout-tip,
+body .mps-callout-hint,
+body .mps-callout-important        { --mps-callout-rgb:   0, 175, 175; }
+body .mps-callout-success,
+body .mps-callout-check,
+body .mps-callout-done             { --mps-callout-rgb: 100, 180, 100; }
+body .mps-callout-question,
+body .mps-callout-help,
+body .mps-callout-faq              { --mps-callout-rgb: 200, 175,  50; }
+body .mps-callout-warning,
+body .mps-callout-caution,
+body .mps-callout-attention        { --mps-callout-rgb: 220, 145,  60; }
+body .mps-callout-failure,
+body .mps-callout-fail,
+body .mps-callout-missing          { --mps-callout-rgb: 220,  95,  95; }
+body .mps-callout-danger,
+body .mps-callout-error            { --mps-callout-rgb: 220,  95,  95; }
+body .mps-callout-bug              { --mps-callout-rgb: 200, 100, 130; }
+body .mps-callout-example          { --mps-callout-rgb: 165, 130, 200; }
+body .mps-callout-quote,
+body .mps-callout-cite             { --mps-callout-rgb: 150, 150, 150; }
+
+body .mps-callout {
+  padding: 0.9em 1em;
+  border-left: 4px solid rgb(var(--mps-callout-rgb));
+  border-radius: 4px;
+  background: rgba(var(--mps-callout-rgb), 0.1);
+}
+
+body .mps-callout-title {
+  font-weight: 600;
+  color: rgb(var(--mps-callout-rgb));
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+}
+
+body .mps-callout-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+body .mps-callout-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Vertical rhythm inside the box: title sits at the top, each subsequent
+   block sibling pushes off it. Overrides the body :where() margin reset.
+   Title-to-content is tighter than body-to-body. */
+body .mps-callout > * + * {
+  margin-top: 0.6em;
+}
+body .mps-callout > .mps-callout-title + * {
+  margin-top: 0.3em;
+}
+
+/* The outer .mps-callout and its inner .mps-callout-title both inherit
+   .code-line + data-mps-line from the tokens they were built from. Without
+   suppression, the gutter shows two identical line numbers stacked. The
+   title's number lines up with the visible heading, so it wins; hide the
+   container's. Same pattern as the blockquote-container rule earlier. */
+body div.mps-callout.code-line::before {
+  display: none !important;
+}
+
 /* Body tables - bordered, header-shaded layout.
    Scoped with :not(.mps-properties-table) so the frontmatter table keeps
    its borderless presentation.
