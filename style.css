@@ -314,7 +314,7 @@ body .markdown-alert {
 }
 
 body .markdown-alert-title {
-  font-weight: 600;
+  font-weight: 600 !important;
   color: rgb(var(--mps-callout-rgb));
   display: flex;
   align-items: center;
@@ -323,6 +323,20 @@ body .markdown-alert-title {
      spacing of .mps-callout-title (which has no inter-token whitespace). */
   gap: 0;
   margin: 0;
+  /* VS Code's GFM plugin renders the title smaller than body text (and
+     sometimes upper-cased). Reset both so it matches .mps-callout-title.
+     !important required because the GFM injected styling appears later in
+     the cascade than ours. */
+  font-size: 1em !important;
+  text-transform: none !important;
+}
+
+/* Belt-and-braces: if the title text is wrapped in a child element (some
+   GFM plugins put the type name inside an <strong>), force it to inherit. */
+body .markdown-alert-title > *:not(svg) {
+  font-size: inherit !important;
+  text-transform: inherit !important;
+  font-weight: inherit !important;
 }
 
 body .markdown-alert-title svg {
