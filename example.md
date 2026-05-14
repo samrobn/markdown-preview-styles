@@ -163,7 +163,7 @@ Obsidian-style callouts using the `> [!type]` syntax. Each callout has a type, a
 
 ### Variants
 
-> [!info] Foldable, default collapsed
+> [!info]- Foldable, default collapsed
 > Append `-` to the type to make the callout foldable and start it collapsed.
 
 > [!info]+ Foldable, default expanded

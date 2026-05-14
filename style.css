@@ -245,6 +245,53 @@ body div.mps-callout.code-line::before {
   display: none !important;
 }
 
+/* VS Code's preview natively renders the GFM alert subset `[!NOTE|TIP|
+   IMPORTANT|WARNING|CAUTION]` into `.markdown-alert` divs before our
+   mps_callouts rule can claim the blockquote. Mirror the .mps-callout
+   look here so the two paths render consistently. */
+/* Colours mirror .mps-callout-* above so the two render paths look
+   identical regardless of which one VS Code routes a given type through. */
+body .markdown-alert                  { --mps-callout-rgb: 140, 140, 140; }
+body .markdown-alert-note             { --mps-callout-rgb:  86, 156, 214; }
+body .markdown-alert-tip              { --mps-callout-rgb:   0, 175, 175; }
+body .markdown-alert-important        { --mps-callout-rgb:   0, 175, 175; }
+body .markdown-alert-warning          { --mps-callout-rgb: 220, 145,  60; }
+body .markdown-alert-caution          { --mps-callout-rgb: 220, 145,  60; }
+
+body .markdown-alert {
+  padding: 0.9em 1em;
+  border-left: 4px solid rgb(var(--mps-callout-rgb));
+  border-radius: 4px;
+  background: rgba(var(--mps-callout-rgb), 0.1);
+  margin: 0;
+}
+
+body .markdown-alert-title {
+  font-weight: 600;
+  color: rgb(var(--mps-callout-rgb));
+  display: flex;
+  align-items: center;
+  /* GFM alert markup emits `<svg> Title` with a literal space, so the flex
+     gap stacks on top of that space. Use a smaller gap to match the icon
+     spacing of .mps-callout-title (which has no inter-token whitespace). */
+  gap: 0;
+  margin: 0;
+}
+
+body .markdown-alert-title svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex-shrink: 0;
+}
+
+body .markdown-alert > * + * {
+  margin-top: 0.6em;
+}
+
+body .markdown-alert > .markdown-alert-title + * {
+  margin-top: 0.3em;
+}
+
 /* Body tables - bordered, header-shaded layout.
    Scoped with :not(.mps-properties-table) so the frontmatter table keeps
    its borderless presentation.
