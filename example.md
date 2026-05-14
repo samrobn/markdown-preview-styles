@@ -111,6 +111,57 @@ Task list with `- [ ]` and `- [x]`:
     - [x] Grandchild done
     - [ ] Grandchild pending
 
+## Code blocks
+
+Fenced block with a language hint - markdown-it forwards the tag to VS Code's syntax highlighter, which colours tokens against the active theme:
+
+```js
+function greet(name) {
+  return `Hello, ${name}!`;
+}
+console.log(greet('world'));
+```
+
+Fenced block with no language - rendered in the editor monospace font with no highlighting:
+
+```
+plain text
+  indentation
+    is preserved
+end.
+```
+
+Different language, to confirm theme colours track per language:
+
+```python
+def fizzbuzz(n: int) -> str:
+    if n % 15 == 0: return "FizzBuzz"
+    if n % 3 == 0:  return "Fizz"
+    if n % 5 == 0:  return "Buzz"
+    return str(n)
+```
+
+Indented code block (markdown's pre-fenced syntax - four leading spaces, no language hint possible):
+
+    const subtotal = items.reduce(
+      (sum, item) => sum + item.price,
+      0
+    );
+
+A fence inside a fence - use more backticks on the outer pair so the inner ` ``` ` survives:
+
+````md
+```js
+const x = 1;
+```
+````
+
+Long lines overflow horizontally rather than wrapping, so wide source stays legible:
+
+```js
+const veryLongVariableName = someFunctionThatTakesMany(argumentOne, argumentTwo, argumentThree, argumentFour, argumentFive, argumentSix);
+```
+
 ## Callouts
 
 Obsidian-style callouts using the `> [!type]` syntax. Each callout has a type, an optional custom title, and body content.

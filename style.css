@@ -73,6 +73,53 @@ body :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, hr, table) {
   font-size: 0.9em;
 }
 
+/* Restyle highlight.js tokens to match VS Code's Dark Modern / Dark+ editor
+   palette. VS Code ships its preview with the muted vs2015 highlight.css;
+   these overrides give the same vivid colours you see in the editor (purple
+   control-flow keywords, yellow function names, teal types, light-blue
+   variables, orange strings, green comments). Hard-coded hex rather than
+   theme tokens because VS Code doesn't expose editor token colours as CSS
+   variables - swap these if you change to a different theme. */
+body .hljs-keyword,
+body .hljs-literal,
+body .hljs-symbol,
+body .hljs-name {
+  color: #C586C0;
+}
+body .hljs-built_in,
+body .hljs-type {
+  color: #4EC9B0;
+}
+body .hljs-title,
+body .hljs-function {
+  color: #DCDCAA;
+}
+body .hljs-string,
+body .hljs-meta-string {
+  color: #CE9178;
+}
+body .hljs-number {
+  color: #B5CEA8;
+}
+body .hljs-comment,
+body .hljs-quote {
+  color: #6A9955;
+  font-style: italic;
+}
+body .hljs-variable,
+body .hljs-template-variable,
+body .hljs-attr,
+body .hljs-attribute {
+  color: #9CDCFE;
+}
+body .hljs-params,
+body .hljs-subst {
+  color: #CCCCCC;
+}
+body .hljs-regexp {
+  color: #D16969;
+}
+
 body .code-line:not(table .code-line)::before {
   content: attr(data-mps-line) !important;
   position: absolute !important;
