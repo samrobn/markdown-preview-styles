@@ -29,8 +29,13 @@
     const bodyContentLeft = bodyLeft + parseFloat(getComputedStyle(body).paddingLeft || '0');
     const lines = document.querySelectorAll('.code-line');
     for (const el of lines) {
-      // Skip table descendants - line numbers are suppressed there.
-      if (el.closest('table')) continue;
+      // Skip elements INSIDE a table (rows/cells) - line numbers there are
+      // suppressed by CSS. The <table> element itself still needs its
+      // offset computed; otherwise it falls back to `-5em`, which differs
+      // from `GUTTER_TARGET` whenever the root font-size isn't 16px (e.g.
+      // VS Code's preview root is 14px → static fallback lands 8px to the
+      // right of every other gutter number).
+      if (el.tagName !== 'TABLE' && el.closest('table')) continue;
       const x = el.getBoundingClientRect().left;
       // We want ::before's left edge at (bodyContentLeft + GUTTER_TARGET).
       // ::before is absolute-positioned in el's coord space, so:

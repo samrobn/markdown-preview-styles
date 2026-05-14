@@ -61,6 +61,11 @@ function render(srcPath) {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 ${css}
+/* Match VS Code's preview root font-size (14px). The harness used to inherit
+   the browser default 16px, which silently hid bugs caused by the
+   discrepancy between hard-coded pixel offsets (preview.js GUTTER_TARGET)
+   and rem/em fallbacks in style.css. */
+html { font-size: 14px; }
 body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: #ccc; margin-left: 6em; }
 ul, ol { padding-inline-start: 30px; }
 /* Match VS Code's preview: every .code-line is position: relative so its
@@ -98,6 +103,7 @@ const PAGE_ASSERTIONS = `(() => {
   results.push(sample('li.code-line[data-mps-list-depth="1"]', 'top-level li'));
   results.push(sample('li.code-line[data-mps-list-depth="2"]', 'nested li'));
   results.push(sample('li.code-line[data-mps-list-depth="3"]', 'doubly-nested li'));
+  results.push(sample('table.code-line:not(.mps-properties-table)', 'body table'));
 
   // ul/ol ::before suppression
   const ulEl = document.querySelector('ul.code-line');
