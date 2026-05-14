@@ -92,7 +92,13 @@ VS Code's renderer process isn't launched with `--remote-debugging-port`, so `ag
 
 ### `em` on `::before` resolves against the pseudo's own font-size
 
-`::before` carries `font-size: 0.8rem` so `1em` in its `left` / `width` / `padding-right` is `0.8rem` (≈12.8px at the default 16px root), NOT the parent's 1em. So `left: -5em` is -64px from the parent .code-line's left, not -80px. Easy to miscalculate when triangulating gutter offsets from pixel measurements - convert through the 12.8px-per-em factor, not 16px.
+`::before` carries `font-size: 0.8rem` so `1em` in its `left` / `width` / `padding-right` is `0.8rem`, NOT the parent's 1em. Easy to miscalculate when triangulating gutter offsets from pixel measurements - convert through the 0.8 × root_font_size factor.
+
+The absolute pixel value depends on root font-size:
+- Browser default / visual harness: root = 16px, so 1em on `::before` = 12.8px, `-5em` = -64px.
+- VS Code preview: root = 14px, so 1em on `::before` = 11.2px, `-5em` = -56px.
+
+The static fallback `-5em` in style.css therefore matches `GUTTER_TARGET = -64px` only in the harness, not in the live preview. Any `.code-line` element that doesn't get `--mps-before-left` written by preview.js will visibly drift right by ~8px in the actual preview. Keep preview.js's skip list minimal - the table-skip rule already uses `el.tagName !== 'TABLE' && el.closest('table')` so the `<table>` itself is measured.
 
 ## Project conventions
 

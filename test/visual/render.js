@@ -105,6 +105,22 @@ const PAGE_ASSERTIONS = `(() => {
   results.push(sample('li.code-line[data-mps-list-depth="3"]', 'doubly-nested li'));
   results.push(sample('table.code-line:not(.mps-properties-table)', 'body table'));
 
+  // Cross-sample consistency: every gutter sample above must land at the SAME
+  // beforeX. The individual "in gutter range" checks tolerate ~70px of slop,
+  // which let an 8px table shift slip through historically (preview.js skipped
+  // the <table> itself, so it fell back to -5em - mismatched with GUTTER_TARGET
+  // at the live preview's 14px root). Tolerance is 1px to absorb sub-pixel
+  // rounding only.
+  const gutterSamples = results.filter(r => r.beforeX !== undefined);
+  const xs = gutterSamples.map(r => r.beforeX);
+  const spread = xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+  results.push({
+    label: 'all gutter samples land at the same x',
+    ok: spread <= 1,
+    spread: Math.round(spread * 100) / 100,
+    xs,
+  });
+
   // ul/ol ::before suppression
   const ulEl = document.querySelector('ul.code-line');
   results.push({
@@ -158,7 +174,9 @@ function check(outPath) {
     // Different assertions surface different fields - show whichever's present.
     const detail = r.beforeX !== undefined
       ? `beforeX=${r.beforeX}, content=${r.content}`
-      : r.actual !== undefined
+      : r.spread !== undefined
+        ? `spread=${r.spread}px, xs=[${r.xs.join(', ')}]`
+        : r.actual !== undefined
         ? `actual=${r.actual}`
         : r.top !== undefined
           ? `top=${r.top}, liHeight=${r.liHeight}`
