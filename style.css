@@ -50,7 +50,7 @@ body table .code-line:hover::before {
    Each blank line takes one line-height of vertical space - approximating
    the editor's one-row-per-source-line layout. */
 .mps-blank-line {
-  height: 1lh;
+  height: 1.06lh;
   margin: 0;
   padding: 0;
   border: 0;
@@ -203,6 +203,18 @@ body h1,
 body h2 {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+/* Headings get a little extra breathing room above the blank-line placeholder
+   that already separates them from the previous block. Overrides the body
+   :where(...) margin reset. */
+body h1,
+body h2,
+body h3,
+body h4,
+body h5,
+body h6 {
+  margin-top: 0.5em;
 }
 
 /* Obsidian-style callouts. extension.js rewrites blockquotes starting with

@@ -24,6 +24,18 @@ ln -s ~/Dev/vscode-extensions/markdown-preview-styles \
 
 Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`) so VS Code doesn't load both, then fully quit and relaunch VS Code (`Cmd+Q`).
 
+## Related VS Code settings
+
+The extension's defaults assume a few preview settings. Only `breaks` differs from VS Code's stock defaults; the others are noted for awareness:
+
+- `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines (Obsidian-style). Without this, a single newline collapses into a space within the same paragraph.
+- `"markdown.preview.lineHeight": 1.6` *(default)* - `.mps-blank-line` is calibrated to `1.06lh` against this; changing it shifts the gutter rhythm.
+- `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `em`-based spacing in `style.css` scales with whatever you set here.
+- `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
+- `"markdown.preview.markEditorSelection": true` *(default)* - shows the editor-caret line in the preview. We suppress the hover-indicator variant but keep this one.
+- `"markdown.preview.doubleClickToSwitchToEditor": false` - VS Code defaults this to `true`; disable if you'd rather double-click select text in the preview than jump back to the editor. The visible line-number gutter still lets you eyeball the source row.
+- `"markdown.preview.typographer": false` *(default)* - enable if you want smart quotes (`"x"` → `"x"`) and en/em dash auto-conversion.
+
 ## Example
 
 `example.md` at the project root exercises every Properties-table feature in one file. Open the preview with `Cmd+K V` after install to verify everything renders.

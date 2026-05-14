@@ -52,6 +52,11 @@ Add `mps-hide: true` to a file's frontmatter to suppress the Properties table fo
 
 ## Inline checks
 
+Two consecutive source lines with no blank line between them - with `markdown.preview.breaks: true` they render as separate visual lines; without that setting they collapse into one paragraph joined by a space.
+
+First line of a soft-break pair.
+Second line, no blank line above it.
+
 URLs in body text are handled by markdown-it: <https://example.com>.
 
 Wiki-links in body text get the same `.mps-wiki-link` styling as Properties values:
