@@ -125,12 +125,16 @@ body .code-line[data-mps-list-depth="5"]:not(table .code-line)::before {
   left: var(--mps-before-left, -25em) !important;
 }
 
-/* Suppress duplicate line numbers on list containers. A nested <ul> opens
-   on the same source line as its first <li>, so both carry the same
-   data-mps-line - rendering both produces a visible overlap. The <li>'s
-   number is the useful one (the <ul>'s is purely structural). */
+/* Suppress duplicate line numbers on list and blockquote containers.
+   A nested <ul> opens on the same source line as its first <li>, and a
+   <blockquote> opens on the same source line as its first paragraph -
+   so both carry the same data-mps-line, and rendering both produces a
+   visible overlap. The inner element's number is the useful one (the
+   container's is purely structural). Same logic applies to callouts,
+   which are blockquotes from markdown-it's perspective. */
 body ul.code-line::before,
-body ol.code-line::before {
+body ol.code-line::before,
+body blockquote.code-line::before {
   display: none !important;
 }
 

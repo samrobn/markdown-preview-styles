@@ -63,6 +63,9 @@ function render(srcPath) {
 ${css}
 body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: #ccc; margin-left: 6em; }
 ul, ol { padding-inline-start: 30px; }
+/* Match VS Code's preview: every .code-line is position: relative so its
+   ::before is contained within its own box, not the document body. */
+.code-line { position: relative; }
 </style></head>
 <body class="vscode-dark">
 ${body}
@@ -102,6 +105,15 @@ const PAGE_ASSERTIONS = `(() => {
     label: 'ul ::before display:none',
     ok: ulEl && getComputedStyle(ulEl, '::before').display === 'none',
     actual: ulEl ? getComputedStyle(ulEl, '::before').display : 'no ul.code-line',
+  });
+
+  // blockquote ::before suppression (callout container shares its line with
+  // its first <p> child, same duplicate-number issue as ul/ol).
+  const bqEl = document.querySelector('blockquote.code-line');
+  results.push({
+    label: 'blockquote ::before display:none',
+    ok: bqEl && getComputedStyle(bqEl, '::before').display === 'none',
+    actual: bqEl ? getComputedStyle(bqEl, '::before').display : 'no blockquote.code-line',
   });
 
   // Parent <li> with nested .code-line should NOT have ::before vertically
