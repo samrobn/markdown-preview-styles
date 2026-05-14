@@ -18,6 +18,18 @@ body {
   box-sizing: border-box;
 }
 
+/* Restore the active-line indicator (`markdown.preview.markEditorSelection`)
+   that VS Code normally draws as a 3px `border-left` on `.code-active-line::before`.
+   We've taken that pseudo over for the line-number gutter, so the border
+   gets stripped by the catch-all rule further down. Instead of re-drawing
+   the bar, brighten the gutter line number itself - same convention as VS
+   Code's editor, where the active line's gutter number is highlighted. */
+body.showEditorSelection .code-active-line::before,
+body.showEditorSelection .mps-active-blank-line::before {
+  color: var(--vscode-editorLineNumber-activeForeground, #FFFFFF) !important;
+  opacity: 1 !important;
+}
+
 /* VS Code's hover indicator lives on the `::before` pseudo, not the
    element itself: `.vscode-dark.showEditorSelection .code-line:hover::before
    { border-left: 3px solid rgba(255,255,255,0.6); }`. Strip it and lock

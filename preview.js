@@ -52,6 +52,51 @@
     }
   }
 
+  // Bridge for the editor-selection indicator on blank source lines.
+  //
+  // VS Code's preview script tracks the editor's caret line and toggles
+  // `.code-active-line` on the corresponding `.code-line` element. For
+  // reasons unclear from outside, it skips our `.mps-blank-line` placeholder
+  // divs - they have `data-line` and `code-line` but never receive the
+  // active class. The catch-all `::before` line-number rule plus our
+  // `.code-active-line::before` highlight therefore can't brighten the
+  // gutter number when the caret is on a truly blank source row.
+  //
+  // Listen for the same `onDidChangeTextEditorSelection` message VS Code's
+  // script consumes, exact-match the source line against `.mps-blank-line`
+  // placeholders, and apply `.mps-active-blank-line` ourselves. CSS targets
+  // that class with the same brightened gutter treatment.
+  //
+  // Setting-gate: only acts when `showEditorSelection` is on body, which
+  // VS Code sets iff `markdown.preview.markEditorSelection: true`. The CSS
+  // rule is scoped the same way so the user toggling the setting off makes
+  // both paths inert without a reload.
+  window.addEventListener('message', (e) => {
+    if (e.data?.type !== 'onDidChangeTextEditorSelection') return;
+    if (!document.body.classList.contains('showEditorSelection')) return;
+    const lineN = Math.floor(e.data.line);
+    if (isNaN(lineN)) return;
+    // Defer one frame so we run after VS Code's handler - otherwise it can
+    // overwrite our class clearance for blank-line cases.
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.mps-active-blank-line').forEach(el =>
+        el.classList.remove('mps-active-blank-line')
+      );
+      const placeholder = document.querySelector(
+        `.mps-blank-line[data-line="${lineN}"]`
+      );
+      if (placeholder) {
+        placeholder.classList.add('mps-active-blank-line');
+        // Caret is on a blank line: clear VS Code's stale `.code-active-line`
+        // from whichever previous-content element it landed on, so we don't
+        // have two brightened gutter numbers at once.
+        document.querySelectorAll('.code-active-line').forEach(el =>
+          el.classList.remove('code-active-line')
+        );
+      }
+    });
+  });
+
   // Run on initial load and any time the preview re-flows.
   let scheduled = false;
   function schedule() {

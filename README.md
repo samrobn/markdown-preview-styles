@@ -32,7 +32,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - `"markdown.preview.lineHeight": 1.6` *(default)* - `.mps-blank-line` is calibrated to `1.06lh` against this; changing it shifts the gutter rhythm.
 - `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `em`-based spacing in `style.css` scales with whatever you set here.
 - `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
-- `"markdown.preview.markEditorSelection": true` *(default)* - shows the editor-caret line in the preview. We suppress the hover-indicator variant but keep this one.
+- `"markdown.preview.markEditorSelection": true` *(default)* - shows the editor-caret line in the preview. The hover-indicator variant is suppressed (line numbers occupy that pseudo-element); the active-line is instead highlighted by brightening its gutter line number, same convention as the editor.
 - `"markdown.preview.doubleClickToSwitchToEditor": false` - VS Code defaults this to `true`; disable if you'd rather double-click select text in the preview than jump back to the editor. The visible line-number gutter still lets you eyeball the source row.
 - `"markdown.preview.typographer": false` *(default)* - enable if you want smart quotes (`"x"` → `"x"`) and en/em dash auto-conversion.
 
