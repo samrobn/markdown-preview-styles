@@ -18,6 +18,18 @@ body {
   box-sizing: border-box;
 }
 
+/* VS Code's markdown.css only applies `position: relative` to `.code-line`
+   when `body.showEditorSelection` is set, which in turn only happens when
+   `markdown.preview.markEditorSelection: true`. As of VS Code 1.120 that
+   setting's default flipped to `false`, so users without an explicit
+   override no longer get the positioned context our line-number `::before`
+   relies on. Without it the absolute-positioned numbers anchor to body
+   and stack off-screen. Force the positioning here unconditionally - we
+   need it for our gutter regardless of the setting. */
+.code-line {
+  position: relative;
+}
+
 /* Restore the active-line indicator (`markdown.preview.markEditorSelection`)
    that VS Code normally draws as a 3px `border-left` on `.code-active-line::before`.
    We've taken that pseudo over for the line-number gutter, so the border
