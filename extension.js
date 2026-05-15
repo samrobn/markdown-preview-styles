@@ -248,6 +248,32 @@ function activate() {
             if (i >= 0) this.attrs[i][1] = this.attrs[i][1] ? this.attrs[i][1] + ' ' + value : value;
             else this.attrs.push([name, value]);
           };
+          // Strip source-map attrs from the container so VS Code's
+          // active-line tracker doesn't pick it. pluginSourceMap gives
+          // every token with .map the `data-line` + `code-line` pair so
+          // its `ce()` finder can match it. The container and the title
+          // share the same line, which means both end up in the candidate
+          // list - and the container (first in DOM order) wins. Its
+          // gutter number is hidden by CSS, so the user sees nothing
+          // brighten when the caret is on the title line. Drop the attrs
+          // here so only the title carries them.
+          //
+          // We deliberately keep .map intact: mps_blank_lines below uses
+          // every level-0 token's map for gap detection between top-level
+          // blocks, and clearing it leaves the gap between adjacent
+          // callouts un-spaced. In VS Code's load order pluginSourceMap
+          // runs BEFORE this rule, so stripping the attrs here is final.
+          // The harness order is reversed and pluginSourceMap re-adds
+          // them, but visually it doesn't matter - the catch-all CSS
+          // suppresses the container's gutter regardless.
+          if (open.attrs) {
+            open.attrs = open.attrs.filter(a => a[0] !== 'data-line' && a[0] !== 'dir');
+            const classAttr = open.attrs.find(a => a[0] === 'class');
+            if (classAttr) {
+              classAttr[1] = classAttr[1].split(/\s+/).filter(c => c && c !== 'code-line').join(' ');
+              if (!classAttr[1]) open.attrs = open.attrs.filter(a => a[0] !== 'class');
+            }
+          }
           open.attrJoin('class', `mps-callout mps-callout-${type}`);
           open.attrSet('data-mps-callout-type', type);
           if (fold) open.attrSet('data-mps-callout-fold', fold === '+' ? 'open' : 'closed');
