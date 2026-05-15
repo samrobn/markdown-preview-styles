@@ -58,7 +58,7 @@ On hover, VS Code also sets `bottom: 0` on the same `::before`, which (combined 
 
 ### Nested list line numbers need per-element measurement, not static CSS
 
-VS Code sets `position: relative` on every `.code-line` (so its hover indicator's `::before` can position itself). Each `<li>` is its own containing block, so the base `left: -5em` on the line-number `::before` is taken from that li's left edge - not from body. Nested items are indented by their parent `<ul>`'s `padding-inline-start`, so the line number drifts into the content area at each nesting level.
+We set `position: relative` on every `.code-line` in `style.css` (VS Code's bundled `markdown.css` only applies it via `body.showEditorSelection .code-line` and as of 1.120 that setting no longer defaults on - see the markEditorSelection gotcha below). Each `<li>` is therefore its own containing block, so the base `left: -5em` on the line-number `::before` is taken from that li's left edge - not from body. Nested items are indented by their parent `<ul>`'s `padding-inline-start`, so the line number drifts into the content area at each nesting level.
 
 What didn't work:
 
@@ -105,6 +105,22 @@ The static fallback `-5em` in style.css therefore matches `GUTTER_TARGET = -64px
 When the preview pane is open beside the editor and the user types, VS Code applies the new HTML as an in-place diff to the existing DOM. Many updates change only attributes or text-node contents without inserting or removing any elements - so a `childList`-only MutationObserver misses them. The symptom: line numbers misalign after any edit (before and after save) because preview.js never re-runs and `--mps-before-left` either becomes stale (layout shifted) or gets cleared by the diff (CSS fallback `-5em` takes over, ~8px off in the live preview - see previous gotcha).
 
 Fix: observe `attributes` (filtered to `style`, `class`, `data-line`, `data-mps-line`) and `characterData` in addition to `childList`. With attribute observation, every `setProperty` we make would fire the observer and schedule another align - a frame-by-frame loop. Guard against it with **idempotent writes**: read the current `--mps-before-left` and skip `setProperty` when unchanged. A `scheduled` flag around `requestAnimationFrame` coalesces N mutation records into one align call per frame.
+
+### `markdown.preview.markEditorSelection` default flipped to `false` in VS Code 1.120
+
+The setting used to default `true`; now it defaults `false`. The body class `showEditorSelection` is what triggered VS Code's bundled `body.showEditorSelection .code-line { position: relative }` rule. Without it, our absolutely-positioned `::before` line numbers lose their per-line containing block and anchor to body, stacking off-screen. Our `style.css` now sets `.code-line { position: relative }` unconditionally to insulate against this and any future toggle of the setting.
+
+The same body class also gates our active-line gutter brightening (`body.showEditorSelection .code-active-line::before { ... }`) and the `preview.js` blank-line bridge (which checks `document.body.classList.contains('showEditorSelection')` before doing any work). So with the setting at its new default, the active-line UX is silent end-to-end. Suggest users set `"markdown.preview.markEditorSelection": true` if they want the indicator back. The README's "Related VS Code settings" section now flags this.
+
+### Callout container and title share the same `data-line`
+
+The blockquote_open token and its first paragraph_open token start on the same source line, so both end up with `map[0] = N` and (via pluginSourceMap) both render with `data-line="N"` + `code-line` class. VS Code's active-line tracker picks the **first** `.code-line` element in document order whose `data-line` matches the caret - that's the container. Its gutter number is suppressed by CSS (the title's number is the visible one), so clicks on the title row showed no brightening at all.
+
+Fix in `mps_callouts`: after the tag rewrites, strip `data-line`, `dir`, and the `code-line` class from the container token's attrs. Only the title carries source-map attributes now, so the active-line tracker exact-matches the title.
+
+Critical: keep `token.map` intact on the container. `mps_blank_lines` walks every **level-0 token's** `.map` for gap detection between top-level blocks (the level check excludes nested content inside blockquotes/lists). Clearing `.map` on the container removes it from the gap-check entry points, and the placeholder that separates adjacent callouts collapses - they render touching with no visible gap.
+
+The visual harness re-adds `data-line` + `code-line` to the container because its pluginSourceMap is registered after our rules (md.use order), whereas VS Code's load order is the reverse. So the harness output looks like the strip didn't happen; the live preview is where it matters.
 
 ## Project conventions
 

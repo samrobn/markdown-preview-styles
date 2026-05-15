@@ -400,6 +400,35 @@ test('fold suffix records the initial expanded/collapsed state', () => {
   assert.strictEqual(getAttr(collapsed[0], 'data-mps-callout-fold'), 'closed');
 });
 
+test('container loses pluginSourceMap data-line and code-line, but keeps token.map', () => {
+  // Regression for the active-line-tracker fix: VS Code's preview script
+  // picks the FIRST .code-line whose data-line matches the caret, so when
+  // both container and title carry the same data-line (they share map[0])
+  // the container wins - and its gutter is hidden by CSS. Strip the
+  // source-map attrs from the container so only the title is a candidate.
+  //
+  // Critical pair: token.map must survive. mps_blank_lines uses every
+  // level-0 token's map for gap-detection between top-level blocks;
+  // clearing it collapses the spacing between adjacent callouts.
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = calloutTokens('[!note] Default note\nbody text');
+  // Simulate pluginSourceMap having already run on the container token.
+  tokens[0].attrs = [
+    ['data-line', '0'],
+    ['class', 'code-line'],
+    ['dir', 'auto'],
+  ];
+  md.runCore('', tokens);
+  const container = tokens[0];
+  assert.strictEqual(getAttr(container, 'data-line'), undefined, 'data-line stripped');
+  assert.strictEqual(getAttr(container, 'dir'), undefined, 'dir stripped');
+  const cls = getAttr(container, 'class') || '';
+  assert.ok(!cls.split(/\s+/).includes('code-line'), 'code-line class stripped');
+  assert.ok(cls.includes('mps-callout'), 'mps-callout class retained');
+  assert.deepStrictEqual(container.map, [0, 1], 'token.map preserved for mps_blank_lines gap-check');
+});
+
 // ---- Summary ----------------------------------------------------------------
 
 console.log(`\n${passed} pass, ${failed} fail`);
