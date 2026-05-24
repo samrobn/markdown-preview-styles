@@ -86,6 +86,8 @@ Blank lines aren't blocks, so markdown-it emits no tokens for them. The `mps_bla
 
 In this VS Code build, `console.log` does not appear in the `Log (Extension Host)` Output channel even though `activate()` and `extendMarkdownIt()` are clearly running. For diagnostics, write to `/tmp/mps-trace.log` via `fs.appendFileSync`, or use `vscode.window.showInformationMessage()` for unmissable toasts. Webview DevTools is available via Command Palette → **Developer: Open Webview Developer Tools** for inspecting preview CSS / DOM.
 
+For runtime values inside `preview.js` (where neither `fs` nor toasts work), persist them to `data-mps-debug-*` attributes on the element you're inspecting. Then Command Palette → **Developer: Open Webview Developer Tools** → Elements panel → `Cmd+F` to find the element → hover over the attribute to see its full value. Works without any console access and survives across re-renders.
+
 ### The webview doesn't expose CDP
 
 VS Code's renderer process isn't launched with `--remote-debugging-port`, so `agent-browser connect` has nothing to attach to. For headless DOM/computed-style inspection use `test/visual/` (it runs real markdown-it + our plugin + the verbatim `pluginSourceMap`); for the live preview, either open Webview DevTools via the Command Palette, or temporarily wrap `md.renderer.render` to write the rendered HTML to disk. Computer-use can drive VS Code's UI (tier "click") for forced reloads.
@@ -121,6 +123,36 @@ Fix in `mps_callouts`: after the tag rewrites, strip `data-line`, `dir`, and the
 Critical: keep `token.map` intact on the container. `mps_blank_lines` walks every **level-0 token's** `.map` for gap detection between top-level blocks (the level check excludes nested content inside blockquotes/lists). Clearing `.map` on the container removes it from the gap-check entry points, and the placeholder that separates adjacent callouts collapses - they render touching with no visible gap.
 
 The visual harness re-adds `data-line` + `code-line` to the container because its pluginSourceMap is registered after our rules (md.use order), whereas VS Code's load order is the reverse. So the harness output looks like the strip didn't happen; the live preview is where it matters.
+
+### Synthetic image tokens need `children`, not just `alt` attrs
+
+VS Code's preview overrides `md.renderer.rules.image` but calls the previous (default) renderer after rewriting `src`. The default markdown-it image renderer does `attrs[alt] = renderInlineAsText(token.children, ...)` on every render — so an empty `children` array clobbers any `alt` attribute we set on the token. When pushing a synthetic `image` token via `state.push('image', 'img', 0)`, populate `tok.children` with a `text` token carrying the alt content; setting `tok.content` alone is not enough.
+
+```js
+const altTok = new state.Token('text', '', 0);
+altTok.content = altText;
+tok.children = [altTok];
+```
+
+Found while implementing `![[image.png]]` embeds. Unit tests caught nothing because they assert on the parser output before the renderer runs; only render-level tests or the live preview surface it.
+
+### `naturalWidth === 0` is NOT a reliable broken-image signal
+
+Chromium reports `naturalWidth = naturalHeight = 0` for any SVG whose `<svg>` root has no `width`, no `height`, AND no `viewBox` (no intrinsic dimensions per CSS Images spec) — even when the load *succeeded*. Don't use `(img.complete && img.naturalWidth === 0 && img.naturalHeight === 0)` as a "did it fail" heuristic — viewBox-less SVGs (common in Figma/Illustrator exports and hand-written icons) get misclassified as broken.
+
+Better signal: track a `loaded` flag set by an `addEventListener('load', ...)` callback. The race-guard for images that completed before the listener attached becomes `if (img.complete && !loaded) handleError()`.
+
+### Pseudo-elements DO render on a broken `<img>` in this Chromium build
+
+`::before` and `::after` are normally suppressed on replaced elements (e.g. `<img>`), but once an `<img>` fails to load, Chromium drops the replaced-element treatment and renders pseudo-elements normally. Verified empirically. Useful for dashed-box / icon / filename treatments on `.mps-broken`.
+
+But: CSS `gap` on an inline-flex parent does NOT add space between an `<img>`'s `::before` and `::after`, because they're not direct flex children of the parent — they're laid out inside the `<img>`'s own box. Use an explicit `margin-right` on `::before` instead of relying on `gap`.
+
+### VS Code does NOT rewrite `<img src>` to a webview URI in the DOM
+
+Counterintuitive but verified by live DevTools inspection: VS Code's preview adds a `data-src` attribute as a sentinel and resolves paths at fetch time via the document's `<base href>`. The `src` attribute on the `<img>` element stays as whatever raw path the token emitted (e.g. `example-image.svg`, `attachments/foo.png`).
+
+This means `preview.js` can `getAttribute('src')` and operate on the user's actual path string — no need to parse webview URIs, no `vscode-webview-resource://` URL surgery. The `attachments/` fallback in `preview.js` works because `setAttribute('src', 'attachments/' + name)` re-triggers VS Code's fetch-time resolution.
 
 ## Project conventions
 

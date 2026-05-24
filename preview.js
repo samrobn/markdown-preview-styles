@@ -155,13 +155,11 @@
       }
 
       // Race-guard for images that resolved BEFORE we attached listeners.
-      // `complete` is true once load OR error has been processed. Don't
-      // gate on naturalWidth/Height being 0 - many SVGs without intrinsic
-      // dimensions (no width/height/viewBox attrs on the <svg> root) load
-      // fine but report 0/0, and would otherwise be misclassified as broken.
-      // Instead, give the load listener one frame to fire; if `complete`
-      // is true and we still haven't seen a load event, the image errored
-      // before we wired up.
+      // `complete` is true once load OR error has been processed. See
+      // CLAUDE.md "naturalWidth === 0 is NOT a reliable broken-image signal"
+      // for why we don't check naturalWidth here. Instead, give the load
+      // listener one frame to fire; if `complete` is true and we still
+      // haven't seen a load event, the image errored before we wired up.
       if (img.complete) {
         requestAnimationFrame(() => {
           if (!loaded) handleError();
