@@ -1,0 +1,19 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+
+# editor / OS
+.DS_Store
+.idea/
+*.swp
+
+# AI agents - never commit into a public-flippable repo
+.claude/
+CLAUDE.local.md
+
+# scratch
+/tmp/
