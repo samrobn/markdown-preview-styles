@@ -1,11 +1,15 @@
 # markdown-preview-styles
 
+[![CI](https://github.com/samrobn/markdown-preview-styles/actions/workflows/ci.yml/badge.svg)](https://github.com/samrobn/markdown-preview-styles/actions/workflows/ci.yml)
+
 Local-only VS Code extension that customises the built-in markdown preview, globally across every workspace. Never published; sideloaded via symlink.
 
 Two things it does:
 
 1. Injects custom CSS into every preview (`markdown.previewStyles`).
 2. Prepends an Obsidian-style **Properties** table above any markdown file with YAML frontmatter, plus a source-line gutter and other tweaks (`markdown.markdownItPlugins`).
+
+![Preview of example.md with the extension active](docs/preview.png)
 
 ## Install / re-install
 
