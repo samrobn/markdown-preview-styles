@@ -4,6 +4,16 @@
   "description": "Personal CSS for VS Code's built-in markdown preview, plus an Obsidian-style frontmatter Properties table.",
   "publisher": "local",
   "version": "0.1.0",
+  "author": "samrobn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samrobn/markdown-preview-styles.git"
+  },
+  "bugs": {
+    "url": "https://github.com/samrobn/markdown-preview-styles/issues"
+  },
+  "homepage": "https://github.com/samrobn/markdown-preview-styles#readme",
   "engines": {
     "vscode": "^1.50.0"
   },
