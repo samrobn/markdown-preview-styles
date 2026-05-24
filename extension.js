@@ -10,6 +10,50 @@ function escapeHtml(s) {
   ));
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#]|$)/i;
+function isImagePath(p) { return IMAGE_EXT_RE.test(String(p)); }
+
+const MAX_EMBED_WIDTH = 4096;
+
+function basenameWithoutExt(p) {
+  const base = String(p).replace(/^.*\//, '');
+  // Returning the unstripped basename when ext-strip yields empty handles
+  // dotfiles like .gitignore (would otherwise render as an empty anchor).
+  const stripped = base.replace(/\.[^.]+$/, '');
+  return stripped || base;
+}
+
+// Two URL-safety guards with different policies for href vs src contexts.
+// Both reject relative paths NEVER (relative is the common case) and parse
+// a scheme prefix only to filter dangerous protocols.
+function checkScheme(raw) {
+  const trimmed = String(raw).trim();
+  const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
+  return { trimmed, scheme: schemeMatch ? schemeMatch[1].toLowerCase() : null };
+}
+
+// For <a href>. Rejects javascript:, vbscript:, file:, data: (including
+// data:image/svg+xml - SVG can carry inline scripts that execute when the
+// browser navigates to the URL as a document). Allows http(s) and mailto.
+function safeHref(raw) {
+  const { trimmed, scheme } = checkScheme(raw);
+  if (!scheme) return trimmed;
+  if (scheme === 'http' || scheme === 'https' || scheme === 'mailto') return trimmed;
+  return '';
+}
+
+// For <img src>. Rejects javascript:, vbscript:, file:, data:text/html etc.
+// Allows http(s) and the data:image/* subset (SVG rendered through an <img>
+// element is sandboxed - scripts don't execute - so the data URL is safe in
+// this context but unsafe in href).
+function safeImgSrc(raw) {
+  const { trimmed, scheme } = checkScheme(raw);
+  if (!scheme) return trimmed;
+  if (scheme === 'http' || scheme === 'https') return trimmed;
+  if (scheme === 'data' && /^data:image\//i.test(trimmed)) return trimmed;
+  return '';
+}
+
 function unquote(s) {
   if (s.length >= 2) {
     const first = s[0], last = s[s.length - 1];
@@ -146,11 +190,44 @@ function formatDate(value) {
   return dmy;
 }
 
+// Tokenise the raw value into a sequence of `{type, content}` segments,
+// rendering each segment with the correct escaping policy for its context.
+// Tokenising first (rather than chained string.replace) avoids two bugs the
+// old implementation had: double-escaping wiki-link hrefs (the regex captured
+// from an already-escaped string and then escaped the href again), and the
+// URL linkifier matching URLs inside an emitted <a href>'s attribute value
+// (because it ran second on a string that already contained anchor HTML).
 function renderText(value) {
-  let s = escapeHtml(String(value));
-  s = s.replace(/\[\[([^\]\n]+)\]\]/g, '<span class="mps-wiki-link">$1</span>');
-  s = s.replace(/https?:\/\/[^\s<>'"]+/g, url => `<a href="${url}">${url}</a>`);
-  return s;
+  const src = String(value);
+  // Combined regex: wiki-link OR URL. The wiki-link branch wins when both
+  // could match the same position because it's listed first in the alternation.
+  const TOKEN_RE = /\[\[([^\]\n]+)\]\]|(https?:\/\/[^\s<>'"]+)/g;
+  let out = '';
+  let lastIndex = 0;
+  let m;
+  while ((m = TOKEN_RE.exec(src)) !== null) {
+    out += escapeHtml(src.slice(lastIndex, m.index));
+    if (m[1] !== undefined) {
+      // Wiki-link. Inner is raw content from the user.
+      const inner = m[1];
+      const display = escapeHtml(basenameWithoutExt(inner));
+      const href = safeHref(inner);
+      out += href
+        ? `<a class="mps-wiki-link" href="${escapeHtml(href)}">${display}</a>`
+        : `<span class="mps-wiki-link">${display}</span>`;
+    } else {
+      // Bare URL. m[2] is the raw URL from the source.
+      const url = m[2];
+      const href = safeHref(url);
+      const escapedDisplay = escapeHtml(url);
+      out += href
+        ? `<a href="${escapeHtml(href)}">${escapedDisplay}</a>`
+        : escapedDisplay;
+    }
+    lastIndex = TOKEN_RE.lastIndex;
+  }
+  out += escapeHtml(src.slice(lastIndex));
+  return out;
 }
 
 function renderValue(value, type) {
@@ -189,6 +266,100 @@ function renderProperties(data) {
 function activate() {
   return {
     extendMarkdownIt(md) {
+      // ![[path]] and ![[path|N]] - Obsidian-style image embeds.
+      // Registered before `link` (markdown-it's built-in inline link rule)
+      // so we get a shot at `![[...]]` before markdown-it tries to read
+      // it as an image-reference-link. The `!` prefix check ensures we
+      // never collide with mps_wikilink (which gates on `[`), so the
+      // relative ordering of the two custom rules doesn't matter.
+      md.inline.ruler.before('link', 'mps_embed', function (state, silent) {
+        const src = state.src;
+        const start = state.pos;
+        if (src.charCodeAt(start) !== 0x21 /* ! */) return false;
+        if (src.charCodeAt(start + 1) !== 0x5B /* [ */) return false;
+        if (src.charCodeAt(start + 2) !== 0x5B) return false;
+        const max = state.posMax;
+        let end = -1;
+        for (let i = start + 3; i < max - 1; i++) {
+          const c = src.charCodeAt(i);
+          if (c === 0x0A /* \n */) return false;
+          if (c === 0x5D /* ] */ && src.charCodeAt(i + 1) === 0x5D) { end = i; break; }
+        }
+        if (end < 0) return false;
+        const inner = src.slice(start + 3, end);
+        if (!inner.trim()) return false;
+        // Pipe-split is only honoured when the right side parses as a
+        // positive integer width. Anything else (Obsidian's caption syntax,
+        // a literal `|` in the path, junk) leaves the full inner as the path.
+        // The old behaviour silently dropped post-pipe content for non-numeric
+        // values, hiding the embed's filename when it contained a literal `|`.
+        let path = inner.trim();
+        let width = null;
+        const pipeIdx = inner.indexOf('|');
+        if (pipeIdx >= 0) {
+          const left = inner.slice(0, pipeIdx).trim();
+          const right = inner.slice(pipeIdx + 1).trim();
+          if (left && /^\d+$/.test(right)) {
+            const parsed = parseInt(right, 10);
+            if (parsed > 0) {
+              path = left;
+              width = Math.min(parsed, MAX_EMBED_WIDTH);
+            }
+          }
+        }
+        if (!path) return false;
+        if (!silent) {
+          // Image branch only fires when the path is BOTH image-shaped AND
+          // accepted by safeImgSrc. A `javascript:foo.png`-shaped path passes
+          // isImagePath (because of the .png suffix) but is rejected by
+          // safeImgSrc - so falls through to the wiki-link branch where
+          // safeHref strips the dangerous scheme. Without this gate, the
+          // image token was pushed with src='' and rendered as a broken
+          // <img> (defence-in-depth gap).
+          const imageSrc = isImagePath(path) ? safeImgSrc(path) : '';
+          if (imageSrc) {
+            // Push a synthetic markdown-it `image` token. VS Code's preview
+            // overrides md.renderer.rules.image to rewrite `src` and register
+            // the file in containingImages (preview auto-reloads when the
+            // attachment changes on disk). Going through the native renderer
+            // is the only way to inherit both behaviours.
+            //
+            // The default image renderer overwrites attrs[alt] via
+            // renderInlineAsText(token.children) - so we must populate
+            // children with a text token containing the alt content, not
+            // leave it empty (the natural inclination). Token.content is
+            // unused by the default renderer; children is what matters.
+            // Alt is the full basename WITH extension. For accessibility
+            // it's the technical identifier; for the broken-image fallback
+            // (which renders the alt next to the browser's broken glyph)
+            // the extension is useful context ("it was looking for a .png").
+            // The wiki-link display elsewhere uses basename-without-ext for
+            // readability in body text - different context.
+            const altText = String(path).replace(/^.*\//, '');
+            const tok = state.push('image', 'img', 0);
+            tok.attrs = [
+              ['src', imageSrc],
+              ['alt', altText],
+              ['class', 'mps-embed-image'],
+            ];
+            if (width !== null) tok.attrs.push(['width', String(width)]);
+            tok.content = altText;
+            const altTok = new state.Token('text', '', 0);
+            altTok.content = altText;
+            tok.children = [altTok];
+          } else {
+            // Non-image OR image-shaped-but-rejected-scheme. Degrade to a
+            // wiki-link. Mark with meta.embed so CSS / future code can
+            // distinguish a degraded embed from a plain [[wiki-link]].
+            const tok = state.push('mps_wikilink', '', 0);
+            tok.content = path;
+            tok.meta = { embed: true };
+          }
+        }
+        state.pos = end + 2;
+        return true;
+      });
+
       md.inline.ruler.before('link', 'mps_wikilink', function (state, silent) {
         const src = state.src;
         const start = state.pos;
@@ -212,7 +383,22 @@ function activate() {
         return true;
       });
       md.renderer.rules.mps_wikilink = function (tokens, idx) {
-        return `<span class="mps-wiki-link">${escapeHtml(tokens[idx].content)}</span>`;
+        const tok = tokens[idx];
+        const content = tok.content;
+        const display = basenameWithoutExt(content);
+        const href = safeHref(content);
+        // Tokens emitted by mps_embed for non-image embeds carry meta.embed
+        // so the rendered anchor can be styled distinctly (an attachment
+        // icon, dimmer treatment, etc). Without this signal the degraded
+        // embed renders identically to a plain [[wiki-link]] - the user
+        // gets no indication the embed didn't render inline.
+        const cls = tok.meta && tok.meta.embed
+          ? 'mps-wiki-link mps-embed-fallback'
+          : 'mps-wiki-link';
+        // Empty href falls back to the inert span - covers [[javascript:...]]
+        // and similar dangerous schemes.
+        if (!href) return `<span class="${cls}">${escapeHtml(display)}</span>`;
+        return `<a class="${cls}" href="${escapeHtml(href)}">${escapeHtml(display)}</a>`;
       };
 
       // Obsidian-style callouts: `> [!type] Optional title` at the start of a

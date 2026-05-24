@@ -97,12 +97,112 @@
     });
   });
 
+  // Broken-image fallback for Obsidian-style embeds (![[image.png]]).
+  //
+  // extension.js pushes a synthetic markdown-it `image` token with class
+  // `mps-embed-image` and the raw path from the wiki syntax. VS Code's
+  // preview leaves `src` as that raw path (it adds a `data-src` sentinel
+  // and resolves the path at fetch time via the webview's base href). If
+  // the file doesn't exist the <img> fires an `error` event.
+  //
+  // First error on a bare filename (no slash): retry with `attachments/`
+  // prefixed. Matches the Obsidian convention where image assets live in
+  // an attachments/ subdirectory next to the markdown file. Paths with a
+  // slash are NOT retried - if the user wrote `![[sub/foo.png]]`, retrying
+  // as `sub/attachments/foo.png` is more likely to surprise than help.
+  //
+  // Second error (or first when the path had a slash): add `.mps-broken`
+  // so CSS can render the placeholder with the original path text.
+  function setupBrokenImageFallback() {
+    const imgs = document.querySelectorAll('img.mps-embed-image:not([data-mps-wired])');
+    for (const img of imgs) {
+      img.setAttribute('data-mps-wired', 'true');
+      // Capture the raw path BEFORE any error fires. The fallback swap
+      // mutates `src` to `attachments/<name>`, so without this snapshot
+      // the broken-state placeholder would show the post-swap path
+      // instead of the user's actual `![[name]]` argument.
+      img.setAttribute('data-mps-original-src', img.getAttribute('src') || '');
+
+      let loaded = false;
+      img.addEventListener('load', () => { loaded = true; });
+      img.addEventListener('error', handleError);
+
+      function handleError() {
+        // Lost-race protection on top of the load-listener: if the load
+        // event managed to fire AND the error somehow fires later (browsers
+        // shouldn't, but defence in depth), don't degrade a working image.
+        if (loaded) return;
+        if (!img.hasAttribute('data-mps-fallback-tried')) {
+          img.setAttribute('data-mps-fallback-tried', 'true');
+          const currentSrc = img.getAttribute('src') || '';
+          // Case-insensitive check so capital-A `Attachments/` (a common
+          // Obsidian customisation) also short-circuits the retry instead
+          // of producing `Attachments/attachments/foo.png`.
+          const lc = currentSrc.toLowerCase();
+          // Narrow the retry to bare filenames - paths with a slash are
+          // the user's explicit relative path and shouldn't be guessed at.
+          // This matches the README documentation.
+          const isBareFilename = currentSrc && !currentSrc.includes('/');
+          const alreadyInAttachments = lc.includes('/attachments/') || lc.startsWith('attachments/');
+          if (isBareFilename && !alreadyInAttachments) {
+            img.setAttribute('src', 'attachments/' + currentSrc);
+            return;
+          }
+        }
+        if (!img.classList.contains('mps-broken')) {
+          img.classList.add('mps-broken');
+        }
+      }
+
+      // Race-guard for images that resolved BEFORE we attached listeners.
+      // `complete` is true once load OR error has been processed. Don't
+      // gate on naturalWidth/Height being 0 - many SVGs without intrinsic
+      // dimensions (no width/height/viewBox attrs on the <svg> root) load
+      // fine but report 0/0, and would otherwise be misclassified as broken.
+      // Instead, give the load listener one frame to fire; if `complete`
+      // is true and we still haven't seen a load event, the image errored
+      // before we wired up.
+      if (img.complete) {
+        requestAnimationFrame(() => {
+          if (!loaded) handleError();
+        });
+      }
+    }
+  }
+
+  // Reset the wired state when VS Code's in-place DOM diff mutates an
+  // existing <img>'s src. Without this, swapping `![[a.png]]` for
+  // `![[b.png]]` in the source reuses the same <img> element with stale
+  // data-mps-wired / data-mps-fallback-tried / data-mps-original-src,
+  // so the new image inherits the previous one's broken-state behaviour.
+  function rewireChangedImages() {
+    const imgs = document.querySelectorAll('img.mps-embed-image[data-mps-wired]');
+    for (const img of imgs) {
+      const current = img.getAttribute('src') || '';
+      const captured = img.getAttribute('data-mps-original-src') || '';
+      // If src differs from the captured original AND it's not just the
+      // attachments/ retry we issued ourselves, the diff swapped in a
+      // genuinely new path - clear wired state so setupBrokenImageFallback
+      // re-runs on the next schedule().
+      if (current !== captured && current !== 'attachments/' + captured) {
+        img.removeAttribute('data-mps-wired');
+        img.removeAttribute('data-mps-fallback-tried');
+        img.classList.remove('mps-broken');
+      }
+    }
+  }
+
   // Run on initial load and any time the preview re-flows.
   let scheduled = false;
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; align(); });
+    requestAnimationFrame(() => {
+      scheduled = false;
+      align();
+      rewireChangedImages();
+      setupBrokenImageFallback();
+    });
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', schedule);
@@ -123,7 +223,12 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['style', 'class', 'data-line', 'data-mps-line'],
+    // 'src' is included so that VS Code's in-place DOM diff swapping a src
+    // on an existing <img> triggers rewireChangedImages, which clears the
+    // wired state so the new src gets fresh fallback handling. We write
+    // src ourselves during the attachments/ retry; that write is gated by
+    // data-mps-fallback-tried (not in this filter) so it doesn't loop.
+    attributeFilter: ['style', 'class', 'data-line', 'data-mps-line', 'src'],
     characterData: true,
   });
 })();

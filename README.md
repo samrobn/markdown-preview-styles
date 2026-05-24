@@ -52,7 +52,8 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
 - Inline code (backtick-quoted spans) shrunk to `0.9em`. Fenced code blocks inside `<pre>` are untouched.
 - Renders YAML frontmatter as a Properties table with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
-- Auto-links `https://...` URLs in Properties values; styles `[[wiki-links]]` everywhere (in Properties values and document body). Wiki-links are not clickable - see Known limitations.
+- Auto-links `https://...` URLs in Properties values; styles `[[wiki-links]]` everywhere (in Properties values and document body) as `<a>` tags with basename-without-extension visible text - so `[[notes/2026-meeting]]` displays as `2026-meeting`. VS Code's webview resolves relative `href`s on click via the document-link handler.
+- Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Path resolution is document-relative; bare filenames are retried under `attachments/` on first error. Non-image extensions degrade to a wiki-link rather than an embed. Failed loads show a dashed placeholder with the original path.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
 
 ## Supported frontmatter
@@ -63,7 +64,9 @@ Date-only values are formatted without timezone shift so the day always matches 
 
 ## Known limitations
 
-- **Wiki-links and PARA refs (e.g. `[[TASK-…]]`, `parent: TASK-20260402-…`) are styled but not clickable.** Resolving them properly requires a workspace search (the referenced file is typically in a different folder from the source), which needs a command registration and async lookup. Out of scope for v1; revisit alongside other vault-aware features.
+- **Wiki-link resolution is document-relative, not vault-wide.** A bare `[[note-name]]` won't find `note-name.md` somewhere else in the workspace - it tries to resolve relative to the current file. For image embeds, the resolver also retries with an `attachments/` prefix on first error. Vault-wide basename resolution would need a workspace index and is out of scope for now.
+- **Wiki-link `<a>` clicks go through VS Code's webview link handler.** Non-existent targets surface a "file not found" toast rather than navigating anywhere - no in-preview broken-link styling.
+- **Image embed visible-text change.** Wiki-link display text is the path's basename without extension (matches Obsidian). Existing notes that used directory-prefixed wiki-links like `[[notes/2026-meeting]]` now show just `2026-meeting`. The full path remains in the `href`.
 
 ## Development
 

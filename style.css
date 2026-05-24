@@ -522,8 +522,82 @@ body table:not(.mps-properties-table) tbody tr {
   opacity: 0.9;
 }
 
+/* The wiki-link renderer emits <a class="mps-wiki-link"> for resolvable hrefs
+   (basename-without-extension display) and falls back to <span> when safeUrl
+   rejects the scheme. The colour rule above covers both. Explicit a-rule below
+   strips the default link-blue from VS Code's preview defaults so the dotted-
+   underline treatment stays consistent. */
+a.mps-wiki-link,
+a.mps-wiki-link:hover {
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+}
+
 .mps-prop-value a {
   color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+}
+
+/* Obsidian-style image embeds: ![[image.png]] and ![[image.png|N]].
+   extension.js pushes a synthetic markdown-it `image` token with the
+   `mps-embed-image` class; VS Code's preview rewrites src to a webview
+   URI. Display as a block element with a sensible max-width so wide
+   images don't overflow the preview pane; width="N" still constrains
+   smaller. */
+body .mps-embed-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+
+body.vscode-dark .mps-embed-image,
+body.vscode-high-contrast .mps-embed-image {
+  /* Subtle border separates transparent PNGs from the dark background. */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Broken-image fallback. preview.js adds .mps-broken after the <img> fires
+   `error` (post the attachments/ retry). The browser renders its native
+   broken-image glyph + the alt text (which extension.js sets to the
+   basename of the path); we add a dashed-box frame around that so it
+   reads as a deliberate placeholder rather than a render failure. */
+body .mps-embed-image.mps-broken {
+  display: inline-block;
+  width: auto !important;
+  max-width: 100%;
+  border: 1px dashed var(--vscode-foreground, currentColor);
+  background: var(--vscode-textBlockQuote-background, rgba(120, 120, 120, 0.06));
+  padding: 0.5em 0.7em;
+  opacity: 0.7;
+  color: var(--vscode-descriptionForeground, inherit);
+  font-size: 0.85em;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+/* Degraded embed: a non-image `![[name]]` that fell through to the
+   wiki-link renderer because the path's extension wasn't image-shaped
+   (or the URL scheme was rejected). Visually a wiki-link, but prefixed
+   with an attachment-clip icon so the user can see the embed didn't
+   render inline as they might have expected. */
+body .mps-embed-fallback {
+  --mps-paperclip-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'/></svg>");
+}
+
+body .mps-embed-fallback::before {
+  content: '';
+  display: inline-block;
+  vertical-align: -0.15em;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.25em;
+  background-color: currentColor;
+  -webkit-mask-image: var(--mps-paperclip-icon);
+  mask-image: var(--mps-paperclip-icon);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  opacity: 0.7;
 }
 
 .mps-check.on  { color: var(--vscode-charts-green, #4caf50); }

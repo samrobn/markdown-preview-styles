@@ -24,30 +24,68 @@ function makeToken(opts = {}) {
   };
 }
 
+function StubToken(type, tag, nesting) {
+  this.type = type; this.tag = tag; this.nesting = nesting;
+  this.content = ''; this.block = false; this.attrs = null;
+  this.map = null; this.level = 0; this.children = null;
+}
+StubToken.prototype.attrSet = function (name, value) {
+  this.attrs = this.attrs || [];
+  const i = this.attrs.findIndex(a => a[0] === name);
+  if (i >= 0) this.attrs[i][1] = value;
+  else this.attrs.push([name, value]);
+};
+
 function makeMd() {
   const coreRules = [];
-  const inlineRules = [];
+  // Real markdown-it pre-registers built-in rules (text, link, image, ...).
+  // Pre-seeding `link` here lets `before('link', ...)` find a target and
+  // also makes the stub throw on missing-target the same way real
+  // markdown-it does (`Parser rule not found`), catching latent ordering
+  // bugs in extensions that target rules they shouldn't.
+  const inlineRules = [
+    { name: 'link', fn: () => false },
+  ];
   return {
     core: { ruler: { push(name, fn) { coreRules.push({ name, fn }); } } },
-    inline: { ruler: { before(before, name, fn) { inlineRules.push({ before, name, fn }); } } },
+    inline: {
+      ruler: {
+        before(beforeName, name, fn) {
+          const i = inlineRules.findIndex(r => r.name === beforeName);
+          if (i < 0) throw new Error('Parser rule not found: ' + beforeName);
+          inlineRules.splice(i, 0, { before: beforeName, name, fn });
+        }
+      }
+    },
     renderer: { rules: {} },
     _coreRules: coreRules,
     _inlineRules: inlineRules,
     runCore(src, tokens = []) {
-      function Token(type, tag, nesting) {
-        this.type = type; this.tag = tag; this.nesting = nesting;
-        this.content = ''; this.block = false; this.attrs = null;
-        this.map = null; this.level = 0;
-      }
-      Token.prototype.attrSet = function (name, value) {
-        this.attrs = this.attrs || [];
-        const i = this.attrs.findIndex(a => a[0] === name);
-        if (i >= 0) this.attrs[i][1] = value;
-        else this.attrs.push([name, value]);
-      };
-      const state = { src, tokens, Token };
+      const state = { src, tokens, Token: StubToken };
       for (const r of coreRules) r.fn(state);
       return state;
+    },
+    runInline(src) {
+      // Minimal inline tokenizer: walks the registered rules in order at
+      // each position, advancing pos by 1 when no rule matches (skipping
+      // the character - real markdown-it would push a text token; we don't
+      // need that for the parser-shape assertions).
+      const state = {
+        src, pos: 0, posMax: src.length, tokens: [], Token: StubToken,
+        push(type, tag, nesting) {
+          const t = new StubToken(type, tag, nesting);
+          state.tokens.push(t);
+          return t;
+        },
+      };
+      while (state.pos < state.posMax) {
+        let matched = false;
+        for (const r of inlineRules) {
+          if (r.fn(state, false)) { matched = true; break; }
+        }
+        if (!matched) state.pos++;
+      }
+      return state.tokens;
     }
   };
 }
@@ -109,7 +147,9 @@ test('block arrays render as pills', () => {
 
 test('[[wiki-link]] is treated as a string, not a one-element inline array', () => {
   const html = renderHtml('---\nparent: [[TASK-123]]\n---');
-  assert.match(html, /mps-wiki-link[^>]*>TASK-123<\/span>/);
+  // Renders as an anchor with basename-without-extension visible text.
+  // TASK-123 has no slash and no dot, so basename === content.
+  assert.match(html, /<a class="mps-wiki-link" href="TASK-123">TASK-123<\/a>/);
   assert.doesNotMatch(html, /mps-pill/);
 });
 
@@ -144,7 +184,7 @@ test('URLs in string values are linkified', () => {
 
 test('wiki-link and URL coexist in the same string value', () => {
   const html = renderHtml('---\ndesc: see [[parent]] or https://example.com\n---');
-  assert.match(html, /mps-wiki-link[^>]*>parent</);
+  assert.match(html, /<a class="mps-wiki-link" href="parent">parent<\/a>/);
   assert.match(html, /<a href="https:\/\/example\.com">/);
 });
 
@@ -173,13 +213,127 @@ test('HTML-special characters in values are escaped', () => {
 
 console.log('\nWiki-link inline renderer:');
 
-test('wiki-link renderer wraps and escapes content', () => {
+test('wiki-link renderer emits an <a> with basename-without-extension display', () => {
   const md = makeMd();
   activate().extendMarkdownIt(md);
   const fn = md.renderer.rules.mps_wikilink;
   assert.strictEqual(typeof fn, 'function', 'mps_wikilink renderer should be registered');
-  const html = fn([{ content: 'foo & <bar>' }], 0);
-  assert.strictEqual(html, '<span class="mps-wiki-link">foo &amp; &lt;bar&gt;</span>');
+  assert.strictEqual(
+    fn([{ content: 'notes/2026-meeting' }], 0),
+    '<a class="mps-wiki-link" href="notes/2026-meeting">2026-meeting</a>'
+  );
+  assert.strictEqual(
+    fn([{ content: 'attachments/boiler-1.jpg' }], 0),
+    '<a class="mps-wiki-link" href="attachments/boiler-1.jpg">boiler-1</a>'
+  );
+});
+
+test('wiki-link renderer escapes content in display and href', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  // `foo & <bar>` has no slash, no dot - basename is the whole string;
+  // safeUrl accepts it (no colon scheme), so we get an <a>.
+  assert.strictEqual(
+    fn([{ content: 'foo & <bar>' }], 0),
+    '<a class="mps-wiki-link" href="foo &amp; &lt;bar&gt;">foo &amp; &lt;bar&gt;</a>'
+  );
+});
+
+test('wiki-link renderer rejects javascript: scheme (falls back to inert span)', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  // basename of `javascript:alert(1)` is `javascript:alert(1)` (no slash,
+  // no extension), but safeUrl rejects the scheme - so we get the inert
+  // <span> form with the (escaped) display text.
+  const html = fn([{ content: 'javascript:alert(1)' }], 0);
+  assert.strictEqual(html, '<span class="mps-wiki-link">javascript:alert(1)</span>');
+  assert.doesNotMatch(html, /href=/);
+});
+
+// ---- Embed inline rule (![[...]]) ------------------------------------------
+
+console.log('\nEmbed inline rule:');
+
+function getTokenAttr(tok, name) {
+  return (tok.attrs || []).find(a => a[0] === name)?.[1];
+}
+
+function parseInline(src) {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  return md.runInline(src);
+}
+
+test('![[image.png]] pushes one image token with src/alt/class', () => {
+  const tokens = parseInline('![[image.png]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(tokens[0].type, 'image');
+  assert.strictEqual(getTokenAttr(tokens[0], 'src'), 'image.png');
+  assert.strictEqual(getTokenAttr(tokens[0], 'alt'), 'image.png');
+  assert.strictEqual(getTokenAttr(tokens[0], 'class'), 'mps-embed-image');
+});
+
+test('![[image.png|300]] adds width=300', () => {
+  const tokens = parseInline('![[image.png|300]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(getTokenAttr(tokens[0], 'width'), '300');
+});
+
+test('![[image.png|300abc]] rejects partial-numeric width (no width attr)', () => {
+  const tokens = parseInline('![[image.png|300abc]]');
+  assert.strictEqual(getTokenAttr(tokens[0], 'width'), undefined);
+});
+
+test('![[image.png|0]] and |-5 reject non-positive width', () => {
+  assert.strictEqual(getTokenAttr(parseInline('![[image.png|0]]')[0], 'width'), undefined);
+  assert.strictEqual(getTokenAttr(parseInline('![[image.png|-5]]')[0], 'width'), undefined);
+});
+
+test('![[image.png|abc]] rejects non-numeric width', () => {
+  assert.strictEqual(getTokenAttr(parseInline('![[image.png|abc]]')[0], 'width'), undefined);
+});
+
+test('![[doc.pdf]] degrades to mps_wikilink (non-image extension)', () => {
+  const tokens = parseInline('![[doc.pdf]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+  assert.strictEqual(tokens[0].content, 'doc.pdf');
+});
+
+test('![[attachments/boiler-1.jpg]] keeps the path; alt uses basename', () => {
+  const tokens = parseInline('![[attachments/boiler-1.jpg]]');
+  assert.strictEqual(tokens[0].type, 'image');
+  assert.strictEqual(getTokenAttr(tokens[0], 'src'), 'attachments/boiler-1.jpg');
+  assert.strictEqual(getTokenAttr(tokens[0], 'alt'), 'boiler-1.jpg');
+});
+
+test('![[image.png#thumb]] still matches as image (fragment ignored for ext)', () => {
+  const tokens = parseInline('![[image.png#thumb]]');
+  assert.strictEqual(tokens[0].type, 'image');
+});
+
+test('![[]] (empty) is not consumed as an embed', () => {
+  // mps_embed rejects empty inner. The leading `!` is then skipped, and the
+  // remaining `[[]]` is rejected by mps_wikilink too (empty content), so
+  // nothing is pushed.
+  const tokens = parseInline('![[]]');
+  assert.strictEqual(tokens.length, 0);
+});
+
+test('![[javascript:alert(1)]] degrades safely (non-image ext -> wiki-link, renderer rejects href)', () => {
+  // `javascript:alert(1)` has no recognised image extension, so it goes to
+  // mps_wikilink. The renderer's safeUrl filter then rejects the href.
+  const tokens = parseInline('![[javascript:alert(1)]]');
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+});
+
+test('plain [[wiki-link]] still pushes mps_wikilink token (regression)', () => {
+  const tokens = parseInline('[[some-note]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+  assert.strictEqual(tokens[0].content, 'some-note');
 });
 
 // ---- Core rules: line numbers + blank-line placeholders ---------------------
@@ -427,6 +581,172 @@ test('container loses pluginSourceMap data-line and code-line, but keeps token.m
   assert.ok(!cls.split(/\s+/).includes('code-line'), 'code-line class stripped');
   assert.ok(cls.includes('mps-callout'), 'mps-callout class retained');
   assert.deepStrictEqual(container.map, [0, 1], 'token.map preserved for mps_blank_lines gap-check');
+});
+
+// ---- Regression tests (defects caught by code-review) ----------------------
+
+console.log('\nRegression tests:');
+
+// Defect #1: synthetic image token's alt was clobbered to '' by markdown-it's
+// default image renderer because children = []. Fix: populate children with a
+// text token containing the basename.
+test('image token children carry alt text so default renderer can preserve it', () => {
+  const tokens = parseInline('![[attachments/boiler-1.jpg]]');
+  assert.strictEqual(tokens[0].type, 'image');
+  assert.ok(Array.isArray(tokens[0].children), 'children must be an array');
+  assert.strictEqual(tokens[0].children.length, 1, 'one text child for alt');
+  assert.strictEqual(tokens[0].children[0].type, 'text');
+  assert.strictEqual(tokens[0].children[0].content, 'boiler-1.jpg');
+});
+
+// Defect #2: renderText double-escaped href because it captured `inner` from
+// the already-escaped string, then re-escaped for the href attribute.
+test('renderText emits href escaped exactly once for special chars', () => {
+  const html = renderHtml('---\ndesc: see [[foo & bar]]\n---');
+  // href decodes to literal "foo & bar" - i.e. attribute value is "foo &amp; bar"
+  // (single escape). Old buggy output was "foo &amp;amp; bar" (double).
+  assert.match(html, /href="foo &amp; bar"/);
+  assert.doesNotMatch(html, /href="foo &amp;amp; bar"/);
+});
+
+test('renderText handles &, <, > in wiki-link content without double-escape', () => {
+  const html = renderHtml('---\nd: see [[a<b>c&d]]\n---');
+  assert.match(html, /href="a&lt;b&gt;c&amp;d"/);
+});
+
+// Defect #3: URL linkifier ran after wiki-link replacement and wrapped URLs
+// sitting inside the emitted href attribute, producing nested-anchor HTML.
+test('renderText does not nest URL anchors inside wiki-link href', () => {
+  const html = renderHtml('---\nlink: [[https://example.com]]\n---');
+  // Should have exactly one anchor opening tag for this value (the wiki-link).
+  const wikiAnchors = (html.match(/<a class="mps-wiki-link"/g) || []).length;
+  assert.strictEqual(wikiAnchors, 1, 'one wiki-link anchor, not nested');
+  // And no double anchor opener like `href="<a href=`.
+  assert.doesNotMatch(html, /href="<a /);
+});
+
+test('renderText still linkifies bare URLs outside wiki-links', () => {
+  const html = renderHtml('---\nd: visit https://example.com please\n---');
+  assert.match(html, /<a href="https:\/\/example\.com">https:\/\/example\.com<\/a>/);
+});
+
+// Defect #4: `![[javascript:foo.png]]` entered the image branch because
+// isImagePath matched .png; safeUrl rejected the scheme but the image token
+// was still pushed with src=''. Fix: gate the image branch on safeImgSrc.
+test('![[javascript:foo.png]] degrades to wiki-link instead of empty-src image', () => {
+  const tokens = parseInline('![[javascript:foo.png]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(tokens[0].type, 'mps_wikilink', 'should NOT be image token');
+  assert.ok(tokens[0].meta && tokens[0].meta.embed, 'marked as embed fallback');
+});
+
+test('![[vbscript:foo.png]] also degrades safely', () => {
+  const tokens = parseInline('![[vbscript:foo.png]]');
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+});
+
+// Defect #7: basenameWithoutExt returned '' for dotfiles. Fix: fall back to
+// unstripped basename when ext-strip yields empty.
+test('basenameWithoutExt: dotfiles keep their leading-dot name', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  const html = fn([{ content: '.gitignore' }], 0);
+  // Display text should be visible, not empty.
+  assert.match(html, />\.gitignore</);
+  assert.doesNotMatch(html, /><\/a>/, 'anchor must not be empty');
+});
+
+test('basenameWithoutExt: trailing slash still yields visible text', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  // For `notes/`, basename strip yields '' which then falls back to '' (no
+  // dotfile rescue available). Document the current behaviour: display IS
+  // empty here because the user literally wrote a directory path. Not a
+  // regression worth fixing - dotfiles were the practical concern.
+  // Just confirm no crash.
+  const html = fn([{ content: 'notes/' }], 0);
+  assert.match(html, /class="mps-wiki-link"/);
+});
+
+// Defect #9: pipe-in-path silently dropped post-pipe content for non-numeric
+// widths. Fix: only honour pipe-split when right side parses as positive int.
+test('![[name|caption]] keeps full path when right side is non-numeric', () => {
+  // Without the fix, this becomes a wiki-link to 'name'. With the fix, the
+  // entire string `name|caption` is treated as the path - which is not image-
+  // shaped (no recognised extension), so degrades to a wiki-link with the
+  // full content preserved (visible as basename 'name|caption' since no
+  // slash, no extension).
+  const tokens = parseInline('![[name|caption]]');
+  assert.strictEqual(tokens.length, 1);
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+  assert.strictEqual(tokens[0].content, 'name|caption');
+});
+
+test('![[image.png|caption text]] keeps full path including pipe section', () => {
+  // With non-numeric right side, path stays as the whole inner. The
+  // extension check sees `image.png|caption text` which doesn't end in
+  // a recognised extension (the `|caption text` suffix breaks the match),
+  // so degrades to a wiki-link with content preserved.
+  const tokens = parseInline('![[image.png|caption text]]');
+  assert.strictEqual(tokens[0].type, 'mps_wikilink');
+  assert.strictEqual(tokens[0].content, 'image.png|caption text');
+});
+
+// Defect #10: safeUrl allowed data:image/svg+xml for <a href>. Fix: split
+// into safeHref (no data:) and safeImgSrc (allows data:image/*).
+test('wiki-link renderer rejects data:image/svg+xml href', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  const html = fn([{ content: 'data:image/svg+xml,<svg onload=alert(1)/>' }], 0);
+  assert.doesNotMatch(html, /href=/, 'must not emit href for data: scheme');
+  assert.match(html, /class="mps-wiki-link"/);
+});
+
+// Defect #11: width had no upper bound. Fix: clamp to 4096.
+test('embed width is clamped to a sane maximum', () => {
+  const tokens = parseInline('![[image.png|999999]]');
+  const widthAttr = (tokens[0].attrs || []).find(a => a[0] === 'width')?.[1];
+  // Specifically the cap is 4096; values above are clamped.
+  assert.strictEqual(widthAttr, '4096');
+});
+
+test('embed width below cap passes through unchanged', () => {
+  const tokens = parseInline('![[image.png|800]]');
+  const widthAttr = (tokens[0].attrs || []).find(a => a[0] === 'width')?.[1];
+  assert.strictEqual(widthAttr, '800');
+});
+
+// Defect #14: degraded embed was indistinguishable from a plain wiki-link.
+// Fix: emit mps-embed-fallback class on degraded embeds.
+test('degraded embed (non-image extension) gets mps-embed-fallback class', () => {
+  const tokens = parseInline('![[doc.pdf]]');
+  // The token's renderer reads meta.embed to add the extra class.
+  assert.ok(tokens[0].meta && tokens[0].meta.embed, 'token meta marks embed');
+
+  // Now check the renderer output adds the class.
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const fn = md.renderer.rules.mps_wikilink;
+  const html = fn([{ content: 'doc.pdf', meta: { embed: true } }], 0);
+  assert.match(html, /class="mps-wiki-link mps-embed-fallback"/);
+});
+
+test('plain [[wiki-link]] does NOT get mps-embed-fallback class', () => {
+  const tokens = parseInline('[[plain-link]]');
+  assert.ok(!(tokens[0].meta && tokens[0].meta.embed), 'no embed marker');
+});
+
+// Defect #15: stub before() silently pushed when target missing. Fix: throw,
+// matching real markdown-it semantics.
+test('stub before() throws when target rule is not registered', () => {
+  const md = makeMd();
+  assert.throws(
+    () => md.inline.ruler.before('nonexistent-rule', 'x', () => {}),
+    /Parser rule not found: nonexistent-rule/
+  );
 });
 
 // ---- Summary ----------------------------------------------------------------

@@ -116,6 +116,30 @@ Task list with `- [ ]` and `- [x]`:
     - [x] Grandchild done
     - [ ] Grandchild pending
 
+## Image embeds
+
+Obsidian-style image embeds. `![[path]]` renders the file inline if the extension is image-like; `![[path|N]]` constrains the width to N px (aspect ratio preserved). Path resolution is document-relative.
+
+Bare embed (full width up to the 880px preview cap):
+
+![[attachments/example-image.svg]]
+
+Width-constrained:
+
+![[attachments/example-image.svg|200]]
+
+Bare filename with the `attachments/` fallback (preview.js retries with `attachments/` prefix on first error):
+
+![[example-image.svg]]
+
+Non-image extension degrades to a wiki-link rather than an embed:
+
+![[example-document.pdf]]
+
+Deliberately missing image - exercises the broken-image placeholder:
+
+![[example-broken.png]]
+
 ## Code blocks
 
 Fenced block with a language hint - markdown-it forwards the tag to VS Code's syntax highlighter, which colours tokens against the active theme:
