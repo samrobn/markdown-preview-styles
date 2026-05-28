@@ -846,6 +846,59 @@ test('parseWikilinkTarget: non-string returns empty parse', () => {
   assert.deepStrictEqual(parseWikilinkTarget(undefined), { name: '', fragment: null, alias: null });
 });
 
+// #6: a ^block fragment is only recognised when the id matches the canonical
+// block-id charset ([A-Za-z0-9_-]). A space or dot means it's NOT a valid
+// block ref, so it's left in the name rather than half-parsed into an id the
+// anchor can never match.
+test('parseWikilinkTarget: ^block with a space is not a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^a b'), { name: 'note^a b', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: ^block with a dot is not a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^v1.2'), { name: 'note^v1.2', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: ^block with valid id chars is a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^blk_1-a'), { name: 'note', fragment: '^blk_1-a', alias: null });
+});
+
+// #8: a pure-fragment target ([[#heading]] / [[^block]]) has an empty name -
+// a same-document link, the way Obsidian treats it.
+test('parseWikilinkTarget: pure heading fragment has empty name', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('#Section A'), { name: '', fragment: '#Section A', alias: null });
+});
+
+test('parseWikilinkTarget: pure block fragment has empty name', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('^blk1'), { name: '', fragment: '^blk1', alias: null });
+});
+
+// #5: fragmentToAnchor's heading slug matches VS Code's GithubSlugifier, so
+// the href anchor lines up with the rendered heading id - including Unicode
+// letters (kept) and consecutive whitespace (each char → a hyphen).
+test('mps_wikilink heading anchor keeps Unicode letters (GitHub slug parity)', () => {
+  withIndex([{ absPath: '/root/notes/note.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[note#Café]]');
+    const env = { currentDocument: { fsPath: '/root/docs/cur.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    // café, not caf - the é is preserved so the anchor matches the rendered
+    // heading id (which VS Code/GitHub also slugs to literal "café").
+    assert.match(html, /#café"/);
+  });
+});
+
+test('mps_wikilink heading anchor replaces each whitespace char (a  b -> a--b)', () => {
+  withIndex([{ absPath: '/root/notes/note.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[note#A  B]]'); // two spaces
+    const env = { currentDocument: { fsPath: '/root/docs/cur.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /#a--b"/);
+  });
+});
+
 // ---- Wikilink resolver ------------------------------------------------------
 
 console.log('\nWikilink resolver:');

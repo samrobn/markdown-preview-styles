@@ -63,12 +63,25 @@ function parseWikilinkTarget(inner) {
   const pipeIdx = inner.indexOf('|');
   const namePart = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
   const alias = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : null;
-  // Fragment lives on the name side. `#heading` or `^block` - first one wins.
-  // Match at end of namePart so a `#` in the basename (unlikely but legal)
-  // doesn't get confused with a heading.
-  const fragMatch = namePart.match(/^(.+?)([#^][^#^]+)$/);
-  const name = fragMatch ? fragMatch[1] : namePart;
-  const fragment = fragMatch ? fragMatch[2] : null;
+  // Fragment lives on the name side, anchored at the end of namePart so a `#`
+  // in the basename (unlikely but legal) isn't mistaken for a heading marker.
+  //   `^block`   - restricted to the canonical block-id charset, so `^a b`
+  //                isn't half-parsed into an id the anchor can never match.
+  //   `#heading` - any run not containing another `#`/`^` (slugified later).
+  // The name part may be empty: `[[#heading]]` / `[[^block]]` are valid
+  // same-document fragment links (the resolver/renderer treat an empty name as
+  // "current document").
+  let name = namePart;
+  let fragment = null;
+  const blockMatch = namePart.match(new RegExp('^(.*?)(\\^' + BLOCK_ID_RE.source + ')$'));
+  const headingMatch = namePart.match(/^(.*?)(#[^#^]+)$/);
+  if (blockMatch) {
+    name = blockMatch[1];
+    fragment = blockMatch[2];
+  } else if (headingMatch) {
+    name = headingMatch[1];
+    fragment = headingMatch[2];
+  }
   return { name, fragment, alias };
 }
 
@@ -136,19 +149,19 @@ function sliceToFragment(src, fragment) {
     const id = fragment.slice(1);
     const re = new RegExp('^(.*\\s\\^' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\s*$', 'm');
     const m = src.match(re);
-    return m ? m[1].replace(/\s+\^[A-Za-z0-9_-]+\s*$/, '') : '';
+    return m ? m[1].replace(new RegExp('\\s+\\^' + BLOCK_ID_RE.source + '\\s*$'), '') : '';
   }
   // Heading fragment: find a heading line matching (case-insensitive,
   // slug-equivalent) the requested heading, take content until the next
   // same-or-higher-level heading.
-  const wantSlug = fragment.slice(1).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_]/g, '');
+  const wantSlug = slugifyHeading(fragment.slice(1));
   const lines = src.split(/\r?\n/);
   let startIdx = -1;
   let startLevel = 0;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*$/);
     if (!m) continue;
-    const slug = m[2].toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_]/g, '');
+    const slug = slugifyHeading(m[2]);
     if (slug === wantSlug) {
       startIdx = i + 1;
       startLevel = m[1].length;
@@ -193,21 +206,39 @@ function tryEmitTranscludeToken(state, path) {
   return true;
 }
 
+// Slugify a heading the way VS Code's preview does, so a `[[note#heading]]`
+// href anchor matches the `id` VS Code renders on the heading element. This is
+// the GitHub slugifier (verified against the 1.122 bundle's GithubSlugifier):
+// trim, lowercase, strip punctuation/symbols, whitespace → '-'.
+//
+// The character class keeps Unicode letters/numbers/marks plus `_`/`-` and
+// strips everything else - so `Café` → `café` and `へや 部屋` → `へや-部屋`,
+// matching the bundle. (The bundle uses an explicit ~2KB Unicode code-point
+// regex; the \p{...} classes reproduce its output for any realistic heading
+// without vendoring that table.) Whitespace is replaced per-character (not
+// collapsed), so `a  b` → `a--b`, again matching GitHub. Duplicate-heading
+// `-1`/`-2` disambiguation is NOT reproduced - a wikilink to a repeated
+// heading targets the first.
+function slugifyHeading(text) {
+  return String(text).trim().toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}_\- ]/gu, '')
+    .replace(/\s/g, '-');
+}
+
+// Canonical block-id character class. A `^block` reference and the
+// `id="mps-block-<id>"` anchor it targets must agree on what a block id is, or
+// the link resolves to nothing. mps_block_anchors only ever mints ids from
+// this class, so parseWikilinkTarget and the slice/anchor paths use it too.
+const BLOCK_ID_RE = /[A-Za-z0-9_-]+/;
+
 // Convert a parsed fragment into the URL-anchor form used in hrefs.
 // `#heading` → `#heading-slug`. `^block` → `#mps-block-<id>`. null → ''.
-// Heading slug matches markdown-it's default header anchor convention:
-// lowercase, whitespace → '-', strip everything other than [a-z0-9-_].
 function fragmentToAnchor(fragment) {
   if (!fragment) return '';
   if (fragment[0] === '^') {
     return '#mps-block-' + fragment.slice(1);
   }
-  // Heading fragment.
-  const slug = fragment.slice(1)
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9\-_]/g, '');
-  return '#' + slug;
+  return '#' + slugifyHeading(fragment.slice(1));
 }
 
 // Percent-encode each path segment, preserving the `/` separators. Used in
