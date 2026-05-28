@@ -1521,7 +1521,7 @@ test('oversized resolvable ![[name]] keeps a document-relative href', () => {
 
 // #14: a note that wiki-links to itself emits just the fragment, so the click
 // scrolls in place instead of reloading the document.
-test('mps_wikilink self-link (resolvedPath === docPath) emits a bare fragment href', () => {
+test('mps_wikilink self-link WITH fragment (resolvedPath === docPath) emits a bare fragment href', () => {
   withIndex([{ absPath: '/root/docs/current.md' }], () => {
     const md = makeMd();
     activate({ subscriptions: [] }).extendMarkdownIt(md);
@@ -1530,6 +1530,21 @@ test('mps_wikilink self-link (resolvedPath === docPath) emits a bare fragment hr
     const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
     assert.match(html, /href="#section-a"/);
     assert.doesNotMatch(html, /current\.md/);
+  });
+});
+
+// A bare self-link (no fragment) must stay a clickable link (its own
+// basename), NOT collapse to an empty href - an empty href would be mistaken
+// for a rejected dangerous scheme and render as an inert <span>.
+test('mps_wikilink bare self-link (no fragment) emits a clickable link, not an inert span', () => {
+  withIndex([{ absPath: '/root/docs/current.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[current]]');
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /<a class="mps-wiki-link" href="current\.md">/);
+    assert.doesNotMatch(html, /<span/);
   });
 });
 

@@ -287,8 +287,12 @@ function docPathFromEnv(env) {
 //   2. docPath unknown → `vscode://file/...` URI. The `vscode:` scheme is in
 //      the click-handler allowlist, so the OS routes it back to VS Code. Costs
 //      one OS prompt and opens the raw editor, but works across any path.
-//   3. target IS the previewed document (self-link) → just the fragment, so
-//      the click scrolls in place instead of reloading the file.
+//   3. target IS the previewed document AND there's a fragment (self-link
+//      like [[current#section]]) → just the fragment, so the click scrolls in
+//      place instead of reloading. A bare self-link ([[current]], no fragment)
+//      falls through to the relative path (its own basename) - a normal
+//      reload link, NOT an empty href (which the renderer would mistake for a
+//      rejected dangerous scheme and render as an inert span).
 // Bare-absolute and `file://` hrefs were both tried and are wrong: VS Code
 // concatenates a bare-absolute onto the preview dir (ENOENT on the doubled
 // path), and `file://` is dropped by the click handler's scheme tests.
@@ -297,7 +301,7 @@ function docPathFromEnv(env) {
 function buildResolvedHref(resolvedPath, fragment, docPath) {
   const anchor = fragmentToAnchor(fragment);
   if (docPath) {
-    if (resolvedPath === docPath) return anchor; // self-link → bare fragment
+    if (resolvedPath === docPath && anchor) return anchor; // self-link w/fragment → scroll in place
     let rel = path.relative(path.dirname(docPath), resolvedPath);
     rel = rel.split(path.sep).join('/'); // Windows backslashes → URL slashes
     return encodePathSegments(rel) + anchor;
