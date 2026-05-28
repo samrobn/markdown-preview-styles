@@ -600,6 +600,33 @@ body .mps-embed-fallback::before {
   opacity: 0.7;
 }
 
+/* Inline note transclusion: ![[name]] for a non-image target. The renderer
+   wraps the embedded body in mps-embed-note > mps-embed-note-body so the
+   container can carry a left-edge indicator and the inner body keeps its
+   default block margins from cascading to the surrounding document. */
+body .mps-embed-note {
+  margin: 0.75em 0;
+  padding: 0.5em 0 0.5em 1em;
+  border-left: 3px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.3));
+  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.05));
+  border-radius: 0 4px 4px 0;
+}
+
+body .mps-embed-note-body > :first-child { margin-top: 0; }
+body .mps-embed-note-body > :last-child  { margin-bottom: 0; }
+
+/* Cycle-broken embed: ![[name]] expanded past depth 2 - render as a link
+   but mark visually so the user knows the inline expansion didn't happen
+   for safety reasons rather than because the target was missing. */
+body .mps-embed-cycle {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* Block-ref anchors: extension.js's mps_block_anchors core rule adds
+   id="mps-block-<id>" to paragraphs/list-items carrying a trailing ^id.
+   No visual treatment by default - the id is purely a scroll target. */
+
 .mps-check.on  { color: var(--vscode-charts-green, #4caf50); }
 .mps-check.off { opacity: 0.4; }
 

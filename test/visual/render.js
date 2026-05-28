@@ -48,7 +48,29 @@ const pluginSourceMap = (md) => {
   }
 };
 
+// Populate the extension's workspace index from the fixtures directory so
+// the harness can exercise wikilink resolution + transclusion paths. The
+// real index is built from vscode.workspace.findFiles inside the running
+// preview; here we seed it directly via the test seam.
+function seedFixtureIndex() {
+  const fixturesRoot = path.join(__dirname, 'fixtures');
+  if (!fs.existsSync(fixturesRoot)) return;
+  const index = new Map();
+  const rootSortKey = fixturesRoot;
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const abs = path.join(dir, name);
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) walk(abs);
+      else if (name.endsWith('.md')) ours.addToIndex(index, abs, rootSortKey);
+    }
+  };
+  walk(fixturesRoot);
+  ours.__setWikiStateForTest({ index, config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 } });
+}
+
 function render(srcPath) {
+  seedFixtureIndex();
   const md = new MarkdownIt({ html: true, linkify: true });
   ours.activate().extendMarkdownIt(md);
   md.use(pluginSourceMap);

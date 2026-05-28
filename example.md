@@ -59,11 +59,26 @@ Second line, no blank line above it.
 
 URLs in body text are handled by markdown-it: <https://example.com>.
 
-Wiki-links in body text get the same `.mps-wiki-link` styling as Properties values:
+Wiki-links in body text get the same `.mps-wiki-link` styling as Properties values, and resolve against a workspace-wide index of `.md` files. Clicking a resolved link navigates in-place (no OS prompt, preview mode), the same as a plain `[text](relative.md)` link.
 
-**See**: [[related-document]] for background (one step → another step → final step).
+### Wiki-link and embed formats
 
-The version in backticks renders as literal text for contrast: `[[related-document]]`. Wiki-links are still not clickable.
+Every supported `[[...]]` / `![[...]]` form, with a live example resolving against the fixtures in `test/visual/fixtures/notes/`:
+
+- **Basic** - `[[related-document]]` → [[related-document]]. Resolved by basename, case-insensitively; the shortest path wins on collision.
+- **Heading fragment** - `[[short-note#Section A]]` → [[short-note#Section A]]. The href anchor is slugified to match the heading's id.
+- **Block fragment** - `[[old-task^archived-block]]` → [[old-task^archived-block]]. Targets a `^block-id` marker (block ids are `[A-Za-z0-9_-]`).
+- **Alias** - `[[related-document|see the neighbour]]` → [[related-document|see the neighbour]]. Resolves the name, displays the alias. Fragment goes before the pipe: `[[name#heading|alias]]`.
+- **Same-document fragment** - `[[#Lists]]` → [[#Lists]]. Empty name, so it links to a heading in *this* file.
+- **Folder-qualified** - `[[notes/short-note]]` → [[notes/short-note]]. A path prefix is accepted (Foam/Dendron style); only the final basename is matched.
+- **Note transclusion** - `![[short-note#Section A]]` inlines the target's content in an `.mps-embed-note` container, falling back to a link when the target is missing, over `embedMaxBytes`, or a cycle is detected (block demo below).
+- **Image embed** - `![[image.png]]` renders the file inline; `![[image.png|N]]` constrains the width to N px (aspect ratio preserved). Resolves document-relative, not via the index (block demos in *Image embeds* below).
+
+A `[[...]]` with no index match stays a document-relative link, and the backtick form `` `[[related-document]]` `` renders as literal text.
+
+Note transclusion, `![[short-note#Section A]]`:
+
+![[short-note#Section A]]
 
 ## Lists
 
@@ -118,7 +133,7 @@ Task list with `- [ ]` and `- [x]`:
 
 ## Image embeds
 
-Obsidian-style image embeds. `![[path]]` renders the file inline if the extension is image-like; `![[path|N]]` constrains the width to N px (aspect ratio preserved). Path resolution is document-relative.
+The `![[image]]` format from the list above, at block size to exercise width and broken-image handling.
 
 Bare embed (full width up to the 880px preview cap):
 

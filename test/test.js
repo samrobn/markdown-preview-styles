@@ -3,7 +3,16 @@
 // markdown-it instance - no real markdown-it dependency.
 
 const assert = require('assert');
-const { activate } = require('../extension.js');
+const {
+  activate,
+  parseWikilinkTarget,
+  resolveWikilinkTarget,
+  addToIndex,
+  removeFromIndex,
+  __setWikiStateForTest,
+  __resetWikiStateForTest,
+  __rebuildWorkspaceIndexForTest,
+} = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
 
@@ -60,8 +69,8 @@ function makeMd() {
     renderer: { rules: {} },
     _coreRules: coreRules,
     _inlineRules: inlineRules,
-    runCore(src, tokens = []) {
-      const state = { src, tokens, Token: StubToken };
+    runCore(src, tokens = [], env = undefined) {
+      const state = { src, tokens, Token: StubToken, env };
       for (const r of coreRules) r.fn(state);
       return state;
     },
@@ -110,6 +119,27 @@ function test(name, fn) {
     console.log('        ' + (e.message || e));
     failed++;
   }
+}
+
+// Async tests register a thunk here; runAsyncTests() awaits them before the
+// summary. Kept separate from the synchronous `test` so the bulk of the suite
+// stays simple.
+const asyncTests = [];
+function testAsync(name, fn) {
+  asyncTests.push(async () => {
+    try {
+      await fn();
+      console.log('  PASS  ' + name);
+      passed++;
+    } catch (e) {
+      console.log('  FAIL  ' + name);
+      console.log('        ' + (e.message || e));
+      failed++;
+    }
+  });
+}
+async function runAsyncTests() {
+  for (const t of asyncTests) await t();
 }
 
 // ---- Frontmatter parser -----------------------------------------------------
@@ -184,8 +214,37 @@ test('URLs in string values are linkified', () => {
 
 test('wiki-link and URL coexist in the same string value', () => {
   const html = renderHtml('---\ndesc: see [[parent]] or https://example.com\n---');
+  // Unresolved (empty index) → document-relative raw name, unchanged behaviour.
   assert.match(html, /<a class="mps-wiki-link" href="parent">parent<\/a>/);
   assert.match(html, /<a href="https:\/\/example\.com">/);
+});
+
+// Frontmatter wikilinks resolve against the workspace index and honour alias
+// syntax, the same as body wikilinks - previously they emitted a literal
+// `href="name|alias"` and never resolved. (renderHtml runs with no env, so the
+// resolved href takes the vscode://file form; with a render env it would be
+// document-relative - covered by the body-renderer env tests.)
+test('frontmatter wikilink resolves against the index (Properties value)', () => {
+  __setWikiStateForTest({ index: (() => { const i = new Map(); addToIndex(i, '/root/notes/parent.md', ''); return i; })(), config: { enabled: true } });
+  try {
+    const html = renderHtml('---\nrelated: [[parent]]\n---');
+    assert.match(html, /href="vscode:\/\/file\/root\/notes\/parent\.md"/);
+    assert.match(html, />parent</);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+test('frontmatter wikilink honours alias and does not emit a literal pipe href', () => {
+  __setWikiStateForTest({ index: (() => { const i = new Map(); addToIndex(i, '/root/notes/meeting.md', ''); return i; })(), config: { enabled: true } });
+  try {
+    const html = renderHtml('---\nparent: [[meeting|Weekly sync]]\n---');
+    assert.match(html, />Weekly sync</);
+    assert.doesNotMatch(html, /meeting\|Weekly sync/); // no literal pipe anywhere
+    assert.match(html, /href="vscode:\/\/file\/root\/notes\/meeting\.md"/);
+  } finally {
+    __resetWikiStateForTest();
+  }
 });
 
 test('date-only formats as dd/mm/yyyy with no TZ shift', () => {
@@ -377,6 +436,23 @@ test('blank source lines between tokens get placeholder html_block tokens', () =
   assert.match(placeholders[0].content, /data-mps-line="2"/);
   assert.match(placeholders[1].content, /data-line="2"/);
   assert.match(placeholders[1].content, /data-mps-line="3"/);
+});
+
+test('mps_blank_lines is skipped inside a transcluded embed (no placeholders, no data-mps-line)', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ map: [0, 1], type: 'paragraph_open' }),
+    makeToken({ map: [3, 4], type: 'paragraph_open' }),
+  ];
+  // Embedded render: env carries mpsEmbedDepth.
+  const state = md.runCore('a\n\n\nb', tokens, { mpsEmbedDepth: 1 });
+  const placeholders = state.tokens.filter(
+    t => typeof t.content === 'string' && t.content.includes('mps-blank-line')
+  );
+  assert.strictEqual(placeholders.length, 0, 'no blank-line placeholders inside an embed');
+  // And no data-mps-line stamped on the host-colliding tokens.
+  assert.strictEqual(getTokenAttr(tokens[0], 'data-mps-line'), undefined);
 });
 
 test('non-blank lines between tokens do NOT get placeholders', () => {
@@ -749,7 +825,826 @@ test('stub before() throws when target rule is not registered', () => {
   );
 });
 
+// ---- Wikilink target parser -------------------------------------------------
+
+console.log('\nWikilink target parser:');
+
+test('parseWikilinkTarget: bare name', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo'), { name: 'foo', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: name with heading fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo#bar'), { name: 'foo', fragment: '#bar', alias: null });
+});
+
+test('parseWikilinkTarget: name with block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo^bar'), { name: 'foo', fragment: '^bar', alias: null });
+});
+
+test('parseWikilinkTarget: name with alias', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo|display'), { name: 'foo', fragment: null, alias: 'display' });
+});
+
+test('parseWikilinkTarget: canonical fragment-before-pipe (heading + alias)', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo#bar|display'), { name: 'foo', fragment: '#bar', alias: 'display' });
+});
+
+test('parseWikilinkTarget: canonical fragment-before-pipe (block + alias)', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('foo^bar|display'), { name: 'foo', fragment: '^bar', alias: 'display' });
+});
+
+test('parseWikilinkTarget: reverse-order (pipe-then-#) keeps # in alias verbatim', () => {
+  // Documents the non-support: `foo|display#bar` is NOT parsed as fragment.
+  // The pipe wins; everything to its right is the alias literally.
+  assert.deepStrictEqual(parseWikilinkTarget('foo|display#bar'), { name: 'foo', fragment: null, alias: 'display#bar' });
+});
+
+test('parseWikilinkTarget: empty input', () => {
+  assert.deepStrictEqual(parseWikilinkTarget(''), { name: '', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: non-string returns empty parse', () => {
+  assert.deepStrictEqual(parseWikilinkTarget(null), { name: '', fragment: null, alias: null });
+  assert.deepStrictEqual(parseWikilinkTarget(undefined), { name: '', fragment: null, alias: null });
+});
+
+// #6: a ^block fragment is only recognised when the id matches the canonical
+// block-id charset ([A-Za-z0-9_-]). A space or dot means it's NOT a valid
+// block ref, so it's left in the name rather than half-parsed into an id the
+// anchor can never match.
+test('parseWikilinkTarget: ^block with a space is not a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^a b'), { name: 'note^a b', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: ^block with a dot is not a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^v1.2'), { name: 'note^v1.2', fragment: null, alias: null });
+});
+
+test('parseWikilinkTarget: ^block with valid id chars is a block fragment', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('note^blk_1-a'), { name: 'note', fragment: '^blk_1-a', alias: null });
+});
+
+// #8: a pure-fragment target ([[#heading]] / [[^block]]) has an empty name -
+// a same-document link, the way Obsidian treats it.
+test('parseWikilinkTarget: pure heading fragment has empty name', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('#Section A'), { name: '', fragment: '#Section A', alias: null });
+});
+
+test('parseWikilinkTarget: pure block fragment has empty name', () => {
+  assert.deepStrictEqual(parseWikilinkTarget('^blk1'), { name: '', fragment: '^blk1', alias: null });
+});
+
+// #5: fragmentToAnchor's heading slug matches VS Code's GithubSlugifier, so
+// the href anchor lines up with the rendered heading id - including Unicode
+// letters (kept) and consecutive whitespace (each char → a hyphen).
+test('mps_wikilink heading anchor keeps Unicode letters (GitHub slug parity)', () => {
+  withIndex([{ absPath: '/root/notes/note.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[note#Café]]');
+    const env = { currentDocument: { fsPath: '/root/docs/cur.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    // café, not caf - the é is preserved so the anchor matches the rendered
+    // heading id (which VS Code/GitHub also slugs to literal "café").
+    assert.match(html, /#café"/);
+  });
+});
+
+test('mps_wikilink heading anchor replaces each whitespace char (a  b -> a--b)', () => {
+  withIndex([{ absPath: '/root/notes/note.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[note#A  B]]'); // two spaces
+    const env = { currentDocument: { fsPath: '/root/docs/cur.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /#a--b"/);
+  });
+});
+
+// ---- Wikilink resolver ------------------------------------------------------
+
+console.log('\nWikilink resolver:');
+
+// Helper: build a test index from a list of {absPath, rootSortKey} entries.
+function makeIndex(entries) {
+  const idx = new Map();
+  const { addToIndex } = require('../extension.js');
+  for (const e of entries) addToIndex(idx, e.absPath, e.rootSortKey || '');
+  return idx;
+}
+
+test('resolveWikilinkTarget: hit on single match', () => {
+  const idx = makeIndex([{ absPath: '/root/notes/foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('foo', idx), '/root/notes/foo.md');
+});
+
+test('resolveWikilinkTarget: miss returns null', () => {
+  const idx = makeIndex([{ absPath: '/root/notes/foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('bar', idx), null);
+});
+
+test('resolveWikilinkTarget: case-insensitive on basename', () => {
+  const idx = makeIndex([{ absPath: '/root/Notes/Foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('foo', idx), '/root/Notes/Foo.md');
+  assert.strictEqual(resolveWikilinkTarget('FOO', idx), '/root/Notes/Foo.md');
+  assert.strictEqual(resolveWikilinkTarget('FoO', idx), '/root/Notes/Foo.md');
+});
+
+test('resolveWikilinkTarget: shortest-path tiebreak within single root', () => {
+  const idx = makeIndex([
+    { absPath: '/root/a/b/c/foo.md' },
+    { absPath: '/root/foo.md' },
+    { absPath: '/root/a/foo.md' },
+  ]);
+  assert.strictEqual(resolveWikilinkTarget('foo', idx), '/root/foo.md');
+});
+
+test('resolveWikilinkTarget: alphabetical tiebreak when paths are same depth', () => {
+  const idx = makeIndex([
+    { absPath: '/root/zeta/foo.md' },
+    { absPath: '/root/alpha/foo.md' },
+    { absPath: '/root/beta/foo.md' },
+  ]);
+  assert.strictEqual(resolveWikilinkTarget('foo', idx), '/root/alpha/foo.md');
+});
+
+test('resolveWikilinkTarget: tolerates trailing .md in the wikilink', () => {
+  const idx = makeIndex([{ absPath: '/root/foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('foo.md', idx), '/root/foo.md');
+});
+
+test('resolveWikilinkTarget: tolerates folder prefix in the wikilink', () => {
+  // `[[some/foo]]` is the Foam/Dendron path-prefix form. We resolve by
+  // basename only - the prefix is hint, not constraint.
+  const idx = makeIndex([{ absPath: '/root/notes/foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('some/foo', idx), '/root/notes/foo.md');
+});
+
+test('resolveWikilinkTarget: empty target returns null', () => {
+  const idx = makeIndex([{ absPath: '/root/foo.md' }]);
+  assert.strictEqual(resolveWikilinkTarget('', idx), null);
+});
+
+test('resolveWikilinkTarget: cross-root ordering by rootSortKey then path', () => {
+  // Two roots: /a/ comes before /z/ alphabetically. Both contain foo.md.
+  // /a/deep/nested/foo.md should still beat /z/foo.md because rootSortKey
+  // dominates - shortest-path only matters within one root.
+  const idx = makeIndex([
+    { absPath: '/z/foo.md', rootSortKey: '/z' },
+    { absPath: '/a/deep/nested/foo.md', rootSortKey: '/a' },
+  ]);
+  assert.strictEqual(resolveWikilinkTarget('foo', idx), '/a/deep/nested/foo.md');
+});
+
+// ---- Index machinery --------------------------------------------------------
+
+console.log('\nIndex add/remove:');
+
+test('addToIndex stores by lowercase basename', () => {
+  const { addToIndex } = require('../extension.js');
+  const idx = new Map();
+  addToIndex(idx, '/root/Foo.md', '');
+  assert.ok(idx.has('foo'));
+  assert.ok(!idx.has('Foo'));
+});
+
+test('addToIndex deduplicates the same absPath', () => {
+  const { addToIndex } = require('../extension.js');
+  const idx = new Map();
+  addToIndex(idx, '/root/foo.md', '');
+  addToIndex(idx, '/root/foo.md', '');
+  assert.strictEqual(idx.get('foo').length, 1);
+});
+
+test('removeFromIndex drops the entry and the bucket when empty', () => {
+  const { addToIndex, removeFromIndex } = require('../extension.js');
+  const idx = new Map();
+  addToIndex(idx, '/root/foo.md', '');
+  removeFromIndex(idx, '/root/foo.md');
+  assert.strictEqual(idx.has('foo'), false);
+});
+
+test('removeFromIndex preserves other entries in the same bucket', () => {
+  const { addToIndex, removeFromIndex } = require('../extension.js');
+  const idx = new Map();
+  addToIndex(idx, '/root/a/foo.md', '');
+  addToIndex(idx, '/root/b/foo.md', '');
+  removeFromIndex(idx, '/root/a/foo.md');
+  assert.strictEqual(idx.get('foo').length, 1);
+  assert.strictEqual(idx.get('foo')[0].absPath, '/root/b/foo.md');
+});
+
+// ---- mps_wikilink with workspace resolution ---------------------------------
+
+console.log('\nWiki-link rule with workspace resolution:');
+
+function withIndex(entries, fn) {
+  const idx = new Map();
+  for (const e of entries) addToIndex(idx, e.absPath, e.rootSortKey || '');
+  __setWikiStateForTest({ index: idx, config: { enabled: true } });
+  try {
+    return fn();
+  } finally {
+    __resetWikiStateForTest();
+  }
+}
+
+test('mps_wikilink rule resolves [[name]] against the index and emits resolved href', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    assert.strictEqual(tokens.length, 1);
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta, 'token has meta');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/notes/foo.md');
+  });
+});
+
+// VS Code's preview passes env.currentDocument as a vscode.Uri (verified
+// against the 1.122 bundle: `currentDocument: typeof e == "string" ? void 0
+// : e.uri`). A Uri exposes `.fsPath` directly - it has NO `.uri` property.
+// When the previewed document's path is known, the renderer must emit a
+// path RELATIVE to that document, schemeless, so VS Code's webview click
+// handler posts an `openLink` message (native in-preview navigation, no OS
+// prompt) instead of falling back to the `vscode://file/...` URI (which
+// triggers an OS prompt and opens the raw editor).
+test('mps_wikilink renderer emits a document-relative href when currentDocument is a Uri (fsPath)', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    // Uri shape: .fsPath present, NO .uri. This is the live VS Code env.
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    // Relative from /root/docs to /root/notes/foo.md is ../notes/foo.md.
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    // Crucially NOT the vscode:// fallback - that's the OS-prompt path.
+    assert.doesNotMatch(html, /vscode:/);
+  });
+});
+
+// Older builds / a future shape change may pass a TextDocument (with .uri.fsPath).
+// The renderer tolerates both so the relative-path behaviour survives either way.
+test('mps_wikilink renderer also reads currentDocument.uri.fsPath (TextDocument shape)', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    const env = { currentDocument: { uri: { fsPath: '/root/docs/current.md' } } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /vscode:/);
+  });
+});
+
+// A heading fragment must ride along on the relative href so the embedded
+// anchor still scrolls to the right place after navigation.
+test('mps_wikilink renderer appends fragment to the document-relative href', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo#Section A]]');
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /href="\.\.\/notes\/foo\.md#section-a"/);
+    assert.doesNotMatch(html, /vscode:/);
+  });
+});
+
+// The incremental live-edit path (typing into a preview-to-the-side) calls
+// VS Code's MarkdownEngine.render with the document TEXT (a string), so
+// env.currentDocument is undefined. env.resourceProvider (the MarkdownPreview
+// instance, passed on every render path) exposes `.resource` - the previewed
+// document's Uri - so docPath survives. Without this, the relative href
+// reverted to the vscode://file fallback after every keystroke.
+test('mps_wikilink renderer reads env.resourceProvider.resource when currentDocument is absent (incremental edit path)', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    // Incremental render env: no currentDocument, resourceProvider has .resource.
+    const env = { resourceProvider: { resource: { fsPath: '/root/docs/current.md' } } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /vscode:/);
+  });
+});
+
+// currentDocument wins over resourceProvider when both are present (full
+// render path) - they agree in practice, but pin the precedence.
+test('mps_wikilink renderer prefers currentDocument over resourceProvider when both present', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    const env = {
+      currentDocument: { fsPath: '/root/docs/current.md' },
+      resourceProvider: { resource: { fsPath: '/elsewhere/other.md' } },
+    };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    // Relative from /root/docs (currentDocument), not /elsewhere.
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+  });
+});
+
+// No docPath available from ANY source (truly empty env) → fall back to the
+// vscode://file URI so the link still works cross-path, just with the
+// OS-prompt friction.
+test('mps_wikilink renderer falls back to vscode://file when no docPath in env', () => {
+  withIndex([{ absPath: '/root/notes/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, {});
+    assert.match(html, /href="vscode:\/\/file\/root\/notes\/foo\.md"/);
+  });
+});
+
+test('mps_wikilink rule renders [[name|alias]] with alias as display text', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo|My display]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, />My display</);
+    assert.match(html, /href="[^"]*foo\.md"/);
+  });
+});
+
+test('mps_wikilink rule renders [[name#heading]] with #heading appended to href', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo#Section A]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    // Slugified heading appears in the href. The slug strategy is "lowercase,
+    // replace whitespace with -" - matches markdown-it's default header anchor.
+    assert.match(html, /href="[^"]*foo\.md#section-a"/);
+  });
+});
+
+test('mps_wikilink rule renders [[name^block]] with #mps-block-<id> in href', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo^xyz123]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="[^"]*foo\.md#mps-block-xyz123"/);
+  });
+});
+
+test('mps_wikilink rule combined: [[name#heading|alias]] keeps alias for display, heading in href', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo#Section A|Pretty name]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, />Pretty name</);
+    assert.match(html, /href="[^"]*foo\.md#section-a"/);
+  });
+});
+
+test('mps_wikilink rule reverse-order [[name|alias#heading]] renders alias#heading verbatim, no anchor jump', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo|My display#Section]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    // The pipe wins; #Section is part of the alias display text.
+    assert.match(html, />My display#Section</);
+    // No fragment in the href.
+    assert.doesNotMatch(html, /href="[^"]*#/);
+  });
+});
+
+test('mps_wikilink rule: unresolved [[name]] falls back to inert span carrying display text', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[never-existed]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    // Per ticket AC: "failed resolution renders an inert span exactly as today".
+    // Today's behaviour is actually an <a> with the relative path - VS Code's
+    // webview link handler then fails to navigate. We preserve that: when there
+    // is NO workspace index hit, we keep the document-relative href so the
+    // existing behaviour is unchanged in workspaces that don't use the index.
+    // The "inert span" is reserved for dangerous-scheme rejection.
+    assert.match(html, /class="mps-wiki-link"/);
+    assert.match(html, />never-existed</);
+  });
+});
+
+// Pure-fragment links ([[#heading]] / [[^block]]) render a single same-
+// document anchor with the fragment text as display - NOT the raw `#frag`
+// content doubled with a re-slugified copy (the bug the empty-name path
+// originally had: `(parsed.name || content) + fragmentToAnchor(...)` produced
+// `#Lists#lists`).
+test('mps_wikilink pure heading fragment [[#Heading]] emits a single same-document anchor', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[#Section Two]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="#section-two"/);
+    assert.doesNotMatch(html, /#section-two#/); // not doubled
+    assert.match(html, />Section Two</); // display is the heading text, not "#Section Two"
+  });
+});
+
+test('mps_wikilink pure block fragment [[^block]] emits a single same-document anchor', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[^my-block]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="#mps-block-my-block"/);
+    assert.match(html, />my-block</); // display is the block id, not "^my-block"
+  });
+});
+
+test('mps_wikilink rule: enabled=false skips index lookup, document-relative behaviour', () => {
+  withIndex([{ absPath: '/root/foo.md' }], () => {
+    __setWikiStateForTest({ config: { enabled: false } });
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[foo]]');
+    // When disabled, the rule should still parse the inner content but skip
+    // the resolver. resolvedPath is null/undefined; href is the raw inner.
+    assert.strictEqual(tokens[0].meta && tokens[0].meta.resolvedPath, undefined);
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="foo"/);
+  });
+});
+
+test('mps_wikilink rule: javascript: scheme still rejected via safeHref', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[javascript:alert(1)]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.doesNotMatch(html, /href=/);
+    assert.match(html, /<span class="mps-wiki-link">/);
+  });
+});
+
+// ---- Block-anchor core rule (mps_block_anchors) -----------------------------
+
+console.log('\nBlock anchor rule:');
+
+test('mps_block_anchors: trailing ^id on a paragraph sets id on paragraph_open and strips marker', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('some text ^xyz123'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+  ];
+  md.runCore('some text ^xyz123', tokens);
+  assert.strictEqual(getAttr(tokens[0], 'id'), 'mps-block-xyz123');
+  assert.strictEqual(tokens[1].content, 'some text', 'marker stripped from inline content');
+});
+
+test('mps_block_anchors: ^id in the middle is NOT a marker (only end-of-block)', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('some ^xyz text continues'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+  ];
+  md.runCore('', tokens);
+  assert.strictEqual(getAttr(tokens[0], 'id'), undefined);
+  assert.strictEqual(tokens[1].content, 'some ^xyz text continues');
+});
+
+test('mps_block_anchors inside an embed strips the marker but does NOT set a duplicate id', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('some text ^xyz123'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+  ];
+  // Embedded render: env carries mpsEmbedDepth.
+  md.runCore('some text ^xyz123', tokens, { mpsEmbedDepth: 1 });
+  assert.strictEqual(getAttr(tokens[0], 'id'), undefined, 'no id inside an embed (would duplicate the host)');
+  assert.strictEqual(tokens[1].content, 'some text', 'marker still stripped for clean text');
+});
+
+test('mps_block_anchors: trailing ^id on a list item sets id on list_item_open', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'list_item_open', tag: 'li', map: [0, 1] }),
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('item text ^abc'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+    makeToken({ type: 'list_item_close', tag: 'li' }),
+  ];
+  md.runCore('', tokens);
+  assert.strictEqual(getAttr(tokens[0], 'id'), 'mps-block-abc', 'id on li, not p');
+  assert.strictEqual(tokens[2].content, 'item text');
+});
+
+test('mps_block_anchors: paragraphs without ^id markers are untouched', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('plain text'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+  ];
+  md.runCore('', tokens);
+  assert.strictEqual(getAttr(tokens[0], 'id'), undefined);
+  assert.strictEqual(tokens[1].content, 'plain text');
+});
+
+// ---- Note transclusion (![[note]]) ------------------------------------------
+
+console.log('\nNote transclusion:');
+
+// Helpers to drive transclusion paths without touching disk. The extension
+// uses injectable readFile/statFile via __setWikiStateForTest.
+function withTranscludeFixtures(files, fn) {
+  const idx = new Map();
+  for (const file of Object.keys(files)) addToIndex(idx, file, '');
+  const readFile = (absPath) => {
+    if (!(absPath in files)) throw new Error('ENOENT: ' + absPath);
+    return files[absPath];
+  };
+  const statFile = (absPath) => {
+    if (!(absPath in files)) throw new Error('ENOENT: ' + absPath);
+    return { size: Buffer.byteLength(files[absPath], 'utf8') };
+  };
+  __setWikiStateForTest({ index: idx, config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 }, readFile, statFile });
+  try {
+    return fn();
+  } finally {
+    __resetWikiStateForTest();
+  }
+}
+
+test('![[name]] for an indexed .md target emits a transclude token, not an image', () => {
+  withTranscludeFixtures({ '/root/foo.md': '# Foo\n\nbody' }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens.length, 1);
+    assert.strictEqual(tokens[0].type, 'mps_embed_note');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/foo.md');
+  });
+});
+
+test('![[name]] when embedNotes=false degrades to mps_wikilink with mps-embed-fallback', () => {
+  withTranscludeFixtures({ '/root/foo.md': '# Foo' }, () => {
+    __setWikiStateForTest({ config: { embedNotes: false } });
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta && tokens[0].meta.embed);
+  });
+});
+
+test('![[name]] when target unresolved degrades to mps_wikilink with mps-embed-fallback', () => {
+  withTranscludeFixtures({}, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[not-in-index]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta && tokens[0].meta.embed);
+  });
+});
+
+test('![[name]] for an oversized target degrades to fallback', () => {
+  const big = 'x'.repeat(300000); // > default 262144
+  withTranscludeFixtures({ '/root/foo.md': big }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta && tokens[0].meta.embed);
+  });
+});
+
+test('![[image.png]] unchanged - still image token, not transclude', () => {
+  withTranscludeFixtures({}, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[pic.png]]');
+    assert.strictEqual(tokens[0].type, 'image');
+  });
+});
+
+test('mps_embed_note renderer wraps content in mps-embed-note container', () => {
+  withTranscludeFixtures({ '/root/foo.md': '# Foo\n\nbody text' }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    const html = md.renderer.rules.mps_embed_note(tokens, 0);
+    assert.match(html, /class="mps-embed-note"/);
+    assert.match(html, /data-source="\/root\/foo\.md"/);
+    assert.match(html, /class="mps-embed-note-body"/);
+  });
+});
+
+// ---- Embed / fallback href construction -------------------------------------
+
+console.log('\nEmbed fallback hrefs:');
+
+const RENDER_ENV = { currentDocument: { fsPath: '/root/docs/current.md' } };
+
+// #1: the three mps_embed_note degrade paths (cycle cap, fragment-miss, read
+// error) must emit a clickable href via buildResolvedHref - a path relative to
+// the previewed document - NOT the bare absolute resolvedPath that VS Code
+// can't navigate (it concatenates onto the preview dir -> ENOENT).
+test('mps_embed_note cycle-cap fallback emits a document-relative href, not a bare absolute path', () => {
+  withTranscludeFixtures({ '/root/notes/foo.md': '# Foo\n\nbody' }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    // Force the cycle cap by rendering at depth 2.
+    const env = Object.assign({ mpsEmbedDepth: 2 }, RENDER_ENV);
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, env);
+    assert.match(html, /class="[^"]*mps-embed-cycle[^"]*"/);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="\/root/); // not the bare absolute path
+  });
+});
+
+test('mps_embed_note read-error fallback emits a document-relative href, not a bare absolute path', () => {
+  // Target is indexed (so resolvedPath is set) but readFile throws (not in
+  // the fixtures map) -> the catch fallback fires.
+  const idx = new Map();
+  addToIndex(idx, '/root/notes/foo.md', '');
+  __setWikiStateForTest({
+    index: idx,
+    config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 },
+    readFile: () => { throw new Error('ENOENT'); },
+    statFile: () => ({ size: 10 }),
+  });
+  try {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="\/root/);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+// #12: fallback display text comes from the parsed target, so an alias shows
+// cleanly instead of the literal "name|alias".
+test('mps_embed_note fallback shows the alias, not the raw name|alias label', () => {
+  const idx = new Map();
+  addToIndex(idx, '/root/notes/foo.md', '');
+  __setWikiStateForTest({
+    index: idx,
+    config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 },
+    readFile: () => { throw new Error('ENOENT'); },
+    statFile: () => ({ size: 10 }),
+  });
+  try {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo|Nice Alias]]');
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, />Nice Alias</);
+    assert.doesNotMatch(html, /foo\|Nice Alias/);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+// #2: a resolvable target that simply wasn't transcluded (embedNotes off, or
+// over the size cap) must keep a working href, not degrade to a dead bare name.
+test('embedNotes=false resolvable ![[name]] keeps a document-relative href (not a bare-name dead link)', () => {
+  withTranscludeFixtures({ '/root/notes/foo.md': '# Foo' }, () => {
+    __setWikiStateForTest({ config: { embedNotes: false } });
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/notes/foo.md');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="foo"/);
+  });
+});
+
+test('oversized resolvable ![[name]] keeps a document-relative href', () => {
+  const big = 'x'.repeat(300000);
+  withTranscludeFixtures({ '/root/notes/foo.md': big }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/notes/foo.md');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+  });
+});
+
+// #14: a note that wiki-links to itself emits just the fragment, so the click
+// scrolls in place instead of reloading the document.
+test('mps_wikilink self-link WITH fragment (resolvedPath === docPath) emits a bare fragment href', () => {
+  withIndex([{ absPath: '/root/docs/current.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[current#Section A]]');
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /href="#section-a"/);
+    assert.doesNotMatch(html, /current\.md/);
+  });
+});
+
+// A bare self-link (no fragment) must stay a clickable link (its own
+// basename), NOT collapse to an empty href - an empty href would be mistaken
+// for a rejected dangerous scheme and render as an inert <span>.
+test('mps_wikilink bare self-link (no fragment) emits a clickable link, not an inert span', () => {
+  withIndex([{ absPath: '/root/docs/current.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[current]]');
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /<a class="mps-wiki-link" href="current\.md">/);
+    assert.doesNotMatch(html, /<span/);
+  });
+});
+
+// ---- Concurrent index rebuild guard (#10) -----------------------------------
+
+console.log('\nConcurrent index rebuild guard:');
+
+// A mock vscode whose findFiles is gated on an external promise, so the test
+// can interleave two rebuilds: start #1 (findFiles pending), start #2 (resolves
+// immediately), then resolve #1. The superseded #1 must dispose its own watcher
+// and NOT commit it, leaving only #2's watcher live.
+function makeMockVscode(findFilesGate) {
+  const created = []; // every watcher created, with a disposed flag
+  // Use a real existing dir so canonicalisePath (fs.realpathSync) keeps the
+  // root - a non-existent path would be filtered out and findFiles never run.
+  const realRoot = require('os').tmpdir();
+  return {
+    created,
+    workspace: {
+      workspaceFolders: [{ uri: { fsPath: realRoot } }],
+      getConfiguration: () => ({ get: (k, d) => (k === 'enabled' ? true : d) }),
+      findFiles: () => findFilesGate(),
+      createFileSystemWatcher: () => {
+        const w = {
+          disposed: false,
+          onDidCreate() {},
+          onDidDelete() {},
+          dispose() { this.disposed = true; },
+        };
+        created.push(w);
+        return w;
+      },
+    },
+    RelativePattern: function (base, glob) { this.base = base; this.glob = glob; },
+    commands: { executeCommand: async () => {} },
+  };
+}
+
+testAsync('a superseded rebuild bails without leaving a duplicate or orphan watcher', async () => {
+  __resetWikiStateForTest();
+  // Rebuild #1: findFiles blocks until we release it.
+  let release1;
+  const gate1 = () => new Promise(res => { release1 = res; });
+  const vscode1 = makeMockVscode(gate1);
+  const ctx = { subscriptions: [] };
+  const p1 = __rebuildWorkspaceIndexForTest(ctx, vscode1);
+
+  // Rebuild #2 starts while #1 is awaiting findFiles; its findFiles resolves
+  // immediately. This bumps the generation, superseding #1.
+  const vscode2 = makeMockVscode(() => Promise.resolve([{ fsPath: '/ws/b.md' }]));
+  const p2 = __rebuildWorkspaceIndexForTest(ctx, vscode2);
+  await p2;
+
+  // Now release #1's findFiles. It detects (after the await) that it's
+  // superseded and bails - BEFORE creating its watcher, so it leaves nothing.
+  release1([{ fsPath: '/ws/a.md' }]);
+  await p1;
+
+  // The superseded rebuild created no watcher (it bailed at the post-findFiles
+  // generation check). Only the winner's watcher exists, is live, and is the
+  // sole entry registered for disposal - no duplicate, no orphan.
+  assert.strictEqual(vscode1.created.length, 0, 'superseded rebuild created no watcher');
+  const w2 = vscode2.created[0];
+  assert.ok(w2 && !w2.disposed, "winning rebuild's watcher should be live");
+  assert.ok(ctx.subscriptions.includes(w2), "winner's watcher registered in context.subscriptions");
+  assert.strictEqual(ctx.subscriptions.length, 1, 'exactly one watcher registered (no leak)');
+  __resetWikiStateForTest();
+});
+
 // ---- Summary ----------------------------------------------------------------
 
-console.log(`\n${passed} pass, ${failed} fail`);
-process.exit(failed ? 1 : 0);
+runAsyncTests().then(() => {
+  console.log(`\n${passed} pass, ${failed} fail`);
+  process.exit(failed ? 1 : 0);
+});
