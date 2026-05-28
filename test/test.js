@@ -11,6 +11,7 @@ const {
   removeFromIndex,
   __setWikiStateForTest,
   __resetWikiStateForTest,
+  __rebuildWorkspaceIndexForTest,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -118,6 +119,27 @@ function test(name, fn) {
     console.log('        ' + (e.message || e));
     failed++;
   }
+}
+
+// Async tests register a thunk here; runAsyncTests() awaits them before the
+// summary. Kept separate from the synchronous `test` so the bulk of the suite
+// stays simple.
+const asyncTests = [];
+function testAsync(name, fn) {
+  asyncTests.push(async () => {
+    try {
+      await fn();
+      console.log('  PASS  ' + name);
+      passed++;
+    } catch (e) {
+      console.log('  FAIL  ' + name);
+      console.log('        ' + (e.message || e));
+      failed++;
+    }
+  });
+}
+async function runAsyncTests() {
+  for (const t of asyncTests) await t();
 }
 
 // ---- Frontmatter parser -----------------------------------------------------
@@ -1511,7 +1533,75 @@ test('mps_wikilink self-link (resolvedPath === docPath) emits a bare fragment hr
   });
 });
 
+// ---- Concurrent index rebuild guard (#10) -----------------------------------
+
+console.log('\nConcurrent index rebuild guard:');
+
+// A mock vscode whose findFiles is gated on an external promise, so the test
+// can interleave two rebuilds: start #1 (findFiles pending), start #2 (resolves
+// immediately), then resolve #1. The superseded #1 must dispose its own watcher
+// and NOT commit it, leaving only #2's watcher live.
+function makeMockVscode(findFilesGate) {
+  const created = []; // every watcher created, with a disposed flag
+  // Use a real existing dir so canonicalisePath (fs.realpathSync) keeps the
+  // root - a non-existent path would be filtered out and findFiles never run.
+  const realRoot = require('os').tmpdir();
+  return {
+    created,
+    workspace: {
+      workspaceFolders: [{ uri: { fsPath: realRoot } }],
+      getConfiguration: () => ({ get: (k, d) => (k === 'enabled' ? true : d) }),
+      findFiles: () => findFilesGate(),
+      createFileSystemWatcher: () => {
+        const w = {
+          disposed: false,
+          onDidCreate() {},
+          onDidDelete() {},
+          dispose() { this.disposed = true; },
+        };
+        created.push(w);
+        return w;
+      },
+    },
+    RelativePattern: function (base, glob) { this.base = base; this.glob = glob; },
+    commands: { executeCommand: async () => {} },
+  };
+}
+
+testAsync('a superseded rebuild bails without leaving a duplicate or orphan watcher', async () => {
+  __resetWikiStateForTest();
+  // Rebuild #1: findFiles blocks until we release it.
+  let release1;
+  const gate1 = () => new Promise(res => { release1 = res; });
+  const vscode1 = makeMockVscode(gate1);
+  const ctx = { subscriptions: [] };
+  const p1 = __rebuildWorkspaceIndexForTest(ctx, vscode1);
+
+  // Rebuild #2 starts while #1 is awaiting findFiles; its findFiles resolves
+  // immediately. This bumps the generation, superseding #1.
+  const vscode2 = makeMockVscode(() => Promise.resolve([{ fsPath: '/ws/b.md' }]));
+  const p2 = __rebuildWorkspaceIndexForTest(ctx, vscode2);
+  await p2;
+
+  // Now release #1's findFiles. It detects (after the await) that it's
+  // superseded and bails - BEFORE creating its watcher, so it leaves nothing.
+  release1([{ fsPath: '/ws/a.md' }]);
+  await p1;
+
+  // The superseded rebuild created no watcher (it bailed at the post-findFiles
+  // generation check). Only the winner's watcher exists, is live, and is the
+  // sole entry registered for disposal - no duplicate, no orphan.
+  assert.strictEqual(vscode1.created.length, 0, 'superseded rebuild created no watcher');
+  const w2 = vscode2.created[0];
+  assert.ok(w2 && !w2.disposed, "winning rebuild's watcher should be live");
+  assert.ok(ctx.subscriptions.includes(w2), "winner's watcher registered in context.subscriptions");
+  assert.strictEqual(ctx.subscriptions.length, 1, 'exactly one watcher registered (no leak)');
+  __resetWikiStateForTest();
+});
+
 // ---- Summary ----------------------------------------------------------------
 
-console.log(`\n${passed} pass, ${failed} fail`);
-process.exit(failed ? 1 : 0);
+runAsyncTests().then(() => {
+  console.log(`\n${passed} pass, ${failed} fail`);
+  process.exit(failed ? 1 : 0);
+});

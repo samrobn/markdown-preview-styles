@@ -632,8 +632,19 @@ async function initWorkspaceIndex(context) {
 
 // Watchers from the previous rebuild - disposed before each fresh build.
 let _activeWatchers = [];
+// Monotonic rebuild counter. rebuildWorkspaceIndex is async with awaits
+// (findFiles per root), so a config change firing during the initial build
+// can interleave a second rebuild with the first. Each call captures the
+// generation at entry and bails after every await if a newer rebuild has
+// started - otherwise two rebuilds both add to the shared index and both push
+// watchers, leaving duplicate live watchers (double index events) and orphans
+// that never get disposed.
+let _rebuildGeneration = 0;
 
 async function rebuildWorkspaceIndex(context, vscode) {
+  const myGen = ++_rebuildGeneration;
+  const superseded = () => myGen !== _rebuildGeneration;
+
   // Re-read config in case this rebuild was triggered by a config change.
   const config = vscode.workspace.getConfiguration('markdownPreviewStyles.wikilinks');
   wikiConfig = {
@@ -679,12 +690,17 @@ async function rebuildWorkspaceIndex(context, vscode) {
 
   // findFiles + watcher per root. Per-root patterns keep the watcher set
   // explicit and let us tag each indexed path with its root's sort key.
+  // Watchers accumulate in a local array and are only committed to the shared
+  // _activeWatchers / context.subscriptions once we know this rebuild won the
+  // race; a superseded rebuild disposes them instead of leaking them.
+  const watchers = [];
   for (const root of roots) {
     const rootSortKey = root.canonical;
     const pattern = new vscode.RelativePattern(root.absPath, '**/*.md');
     const exclude = '**/node_modules/**';
     try {
       const uris = await vscode.workspace.findFiles(pattern, exclude);
+      if (superseded()) { for (const w of watchers) w.dispose(); return; }
       for (const uri of uris) addToIndex(wikiIndex, uri.fsPath, rootSortKey);
     } catch (err) {
       console.warn('markdown-preview-styles: findFiles failed for root', root.absPath, err);
@@ -694,9 +710,12 @@ async function rebuildWorkspaceIndex(context, vscode) {
     watcher.onDidCreate(uri => addToIndex(wikiIndex, uri.fsPath, rootSortKey));
     watcher.onDidDelete(uri => removeFromIndex(wikiIndex, uri.fsPath));
     // onDidChange is a no-op - content edits don't move the file.
-    _activeWatchers.push(watcher);
-    context.subscriptions.push(watcher);
+    watchers.push(watcher);
   }
+
+  // Commit this rebuild's watchers now that it owns the index.
+  _activeWatchers = watchers;
+  for (const w of watchers) context.subscriptions.push(w);
 
   // Refresh any already-open markdown previews. They may have rendered
   // against an empty or stale index; the refresh re-runs the rules with
@@ -1236,3 +1255,6 @@ exports.removeFromIndex = removeFromIndex;
 exports.expandTilde = expandTilde;
 exports.__setWikiStateForTest = __setWikiStateForTest;
 exports.__resetWikiStateForTest = __resetWikiStateForTest;
+// Exported for the concurrency test (rebuild generation guard). Takes the
+// same (context, vscode) it gets in production; a test passes a mock vscode.
+exports.__rebuildWorkspaceIndexForTest = rebuildWorkspaceIndex;
