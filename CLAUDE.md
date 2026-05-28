@@ -208,6 +208,12 @@ The earlier gotcha "VS Code's preview does NOT call `md.render()`" is about VS C
 
 This is *not* a "wrap VS Code's render" - it's a fresh render call on a fresh substring with no expectation that VS Code's own preview pipeline will route through it. Safe pattern.
 
+But the recursion re-runs the **entire core-rule pipeline** on the embedded slice, and some core rules emit host-document-scoped output that must NOT run inside an embed. `mps_blank_lines` would stamp `data-line` / `data-mps-line` numbered from the *slice's* line 0 (colliding with the host's line numbers, misleading VS Code's active-line tracker and double-click-to-jump) and `mps_block_anchors` would emit a second `id="mps-block-<id>"` (duplicate id, invalid HTML, ambiguous scroll target). Both gate on `state.env.mpsEmbedDepth`: `mps_blank_lines` skips entirely (embedded content carries no gutter); `mps_block_anchors` still strips the `^id` marker for clean text but suppresses the id. `mps_callouts` deliberately still runs (callouts are content, not source-mapping); `mps_frontmatter` is a no-op because the slice has already had its frontmatter stripped. Any new source-mapping core rule must add the same `mpsEmbedDepth` gate.
+
+### Heading anchors must match VS Code's GitHub slugifier
+
+A `[[note#heading]]` href anchor (`#slug`) only scrolls to the heading if `slug` equals the `id` VS Code renders on the heading element. The extension does NOT set heading ids itself - VS Code's preview does, via the **GitHub slugifier** (verified against the 1.122 bundle: `heading.trim().toLowerCase().replace(<unicode-symbol-regex>, "").replace(/\s/g, "-")`). The single `slugifyHeading` helper reproduces it with `replace(/[^\p{L}\p{N}\p{M}_\- ]/gu, "").replace(/\s/g, "-")` - the key properties a naive `[^a-z0-9-]` slug gets wrong: **Unicode letters are kept** (`Café` → `café`, not `caf`) and **whitespace is replaced per-character not collapsed** (`a  b` → `a--b`). Do not "simplify" it back to an ASCII-only class. Not reproduced: the `-1`/`-2` suffixing VS Code adds to duplicate headings (a wikilink to a repeated heading targets the first). `env.slugifier` is a stateful builder (`add` only, dedup-tracking) so it can't be borrowed for a one-off fragment without corrupting the ToC counter - hence the standalone helper.
+
 ### The bespoke wikilink parser is the deliberate choice
 
 `markdown-it-wikilinks` exists, supports the pact subset (`name|alias|#heading`), and is what Foam uses. We did not adopt it. Reasons (capturing so future-me doesn't re-litigate):
