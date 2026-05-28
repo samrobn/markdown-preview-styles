@@ -68,8 +68,8 @@ function makeMd() {
     renderer: { rules: {} },
     _coreRules: coreRules,
     _inlineRules: inlineRules,
-    runCore(src, tokens = []) {
-      const state = { src, tokens, Token: StubToken };
+    runCore(src, tokens = [], env = undefined) {
+      const state = { src, tokens, Token: StubToken, env };
       for (const r of coreRules) r.fn(state);
       return state;
     },
@@ -414,6 +414,23 @@ test('blank source lines between tokens get placeholder html_block tokens', () =
   assert.match(placeholders[0].content, /data-mps-line="2"/);
   assert.match(placeholders[1].content, /data-line="2"/);
   assert.match(placeholders[1].content, /data-mps-line="3"/);
+});
+
+test('mps_blank_lines is skipped inside a transcluded embed (no placeholders, no data-mps-line)', () => {
+  const md = makeMd();
+  activate().extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ map: [0, 1], type: 'paragraph_open' }),
+    makeToken({ map: [3, 4], type: 'paragraph_open' }),
+  ];
+  // Embedded render: env carries mpsEmbedDepth.
+  const state = md.runCore('a\n\n\nb', tokens, { mpsEmbedDepth: 1 });
+  const placeholders = state.tokens.filter(
+    t => typeof t.content === 'string' && t.content.includes('mps-blank-line')
+  );
+  assert.strictEqual(placeholders.length, 0, 'no blank-line placeholders inside an embed');
+  // And no data-mps-line stamped on the host-colliding tokens.
+  assert.strictEqual(getTokenAttr(tokens[0], 'data-mps-line'), undefined);
 });
 
 test('non-blank lines between tokens do NOT get placeholders', () => {
@@ -1196,6 +1213,20 @@ test('mps_block_anchors: ^id in the middle is NOT a marker (only end-of-block)',
   md.runCore('', tokens);
   assert.strictEqual(getAttr(tokens[0], 'id'), undefined);
   assert.strictEqual(tokens[1].content, 'some ^xyz text continues');
+});
+
+test('mps_block_anchors inside an embed strips the marker but does NOT set a duplicate id', () => {
+  const md = makeMd();
+  activate({ subscriptions: [] }).extendMarkdownIt(md);
+  const tokens = [
+    makeToken({ type: 'paragraph_open', tag: 'p', map: [0, 1] }),
+    makeInline('some text ^xyz123'),
+    makeToken({ type: 'paragraph_close', tag: 'p' }),
+  ];
+  // Embedded render: env carries mpsEmbedDepth.
+  md.runCore('some text ^xyz123', tokens, { mpsEmbedDepth: 1 });
+  assert.strictEqual(getAttr(tokens[0], 'id'), undefined, 'no id inside an embed (would duplicate the host)');
+  assert.strictEqual(tokens[1].content, 'some text', 'marker still stripped for clean text');
 });
 
 test('mps_block_anchors: trailing ^id on a list item sets id on list_item_open', () => {

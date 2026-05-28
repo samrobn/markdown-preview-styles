@@ -946,6 +946,12 @@ function activate(context) {
       // mps_callouts so a marker on a callout's first line still works.
       md.core.ruler.push('mps_block_anchors', function (state) {
         const tokens = state.tokens;
+        // Inside a transcluded embed, still strip the ^id marker (so the
+        // embedded text reads cleanly) but DON'T emit id="mps-block-<id>" -
+        // the host document already carries that id (or will, if the note is
+        // also open standalone), and a duplicate id is invalid HTML with an
+        // ambiguous scroll target.
+        const embedded = !!(state.env && state.env.mpsEmbedDepth);
         for (let i = 0; i < tokens.length; i++) {
           const tok = tokens[i];
           if (tok.type !== 'inline' || !tok.content) continue;
@@ -977,7 +983,7 @@ function activate(context) {
             if (t.nesting === 1) { openIdx = j; break; }
           }
           if (openIdx < 0) continue;
-          tokens[openIdx].attrSet('id', 'mps-block-' + m[2]);
+          if (!embedded) tokens[openIdx].attrSet('id', 'mps-block-' + m[2]);
           // Strip the marker from inline content and re-parse children if
           // the inline parser is available (real markdown-it). Stub markdown-it
           // in tests has no inline.parse, so leave children as-is - tests
@@ -1114,6 +1120,12 @@ function activate(context) {
       });
 
       md.core.ruler.push('mps_blank_lines', function (state) {
+        // Skip inside a transcluded embed: the line numbers and blank-line
+        // placeholders are source-mapped to the EMBEDDED note's lines, not the
+        // host document's, so emitting them injects data-line/data-mps-line
+        // values that collide with the host's and mislead VS Code's active-line
+        // tracker / double-click-to-jump. Embedded content carries no gutter.
+        if (state.env && state.env.mpsEmbedDepth) return;
         const lines = (state.src || '').split(/\r?\n/);
         const result = [];
         let lastEnd = 0;
