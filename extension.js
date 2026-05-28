@@ -476,7 +476,7 @@ function formatDate(value) {
 // from an already-escaped string and then escaped the href again), and the
 // URL linkifier matching URLs inside an emitted <a href>'s attribute value
 // (because it ran second on a string that already contained anchor HTML).
-function renderText(value) {
+function renderText(value, docPath) {
   const src = String(value);
   // Combined regex: wiki-link OR URL. The wiki-link branch wins when both
   // could match the same position because it's listed first in the alternation.
@@ -487,10 +487,19 @@ function renderText(value) {
   while ((m = TOKEN_RE.exec(src)) !== null) {
     out += escapeHtml(src.slice(lastIndex, m.index));
     if (m[1] !== undefined) {
-      // Wiki-link. Inner is raw content from the user.
+      // Wiki-link. Resolve it the same way the body mps_wikilink renderer
+      // does - parse the alias/fragment, resolve against the workspace index,
+      // build the href - so frontmatter wikilinks navigate and honour alias
+      // syntax instead of emitting a literal `name|alias` href.
       const inner = m[1];
-      const display = escapeHtml(basenameWithoutExt(inner));
-      const href = safeHref(inner);
+      const parsed = parseWikilinkTarget(inner);
+      const display = escapeHtml(parsed.alias != null
+        ? parsed.alias
+        : basenameWithoutExt(parsed.name || inner));
+      const resolved = wikiConfig.enabled ? resolveWikilinkTarget(parsed.name) : null;
+      const href = resolved
+        ? buildResolvedHref(resolved, parsed.fragment, docPath)
+        : safeHref((parsed.name || inner) + fragmentToAnchor(parsed.fragment));
       out += href
         ? `<a class="mps-wiki-link" href="${escapeHtml(href)}">${display}</a>`
         : `<span class="mps-wiki-link">${display}</span>`;
@@ -509,7 +518,7 @@ function renderText(value) {
   return out;
 }
 
-function renderValue(value, type) {
+function renderValue(value, type, docPath) {
   if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) {
     return '<span class="mps-empty">Empty</span>';
   }
@@ -517,7 +526,7 @@ function renderValue(value, type) {
     return `<div class="mps-pills">${value.map(v => `<span class="mps-pill">${escapeHtml(v)}</span>`).join('')}</div>`;
   }
   if (type === 'list') {
-    return value.map(renderText).join(', ');
+    return value.map(v => renderText(v, docPath)).join(', ');
   }
   if (type === 'date' || type === 'datetime') {
     return `<span class="mps-date">${formatDate(value)}</span>`;
@@ -525,10 +534,14 @@ function renderValue(value, type) {
   if (type === 'checkbox') {
     return value ? '<span class="mps-check on">✓</span>' : '<span class="mps-check off">✗</span>';
   }
-  return renderText(value);
+  return renderText(value, docPath);
 }
 
-function renderProperties(data) {
+// docPath (previewed document's path, from docPathFromEnv) lets frontmatter
+// wikilinks resolve to a document-relative href like body wikilinks do; it's
+// undefined when called without a render env (the inner pieces fall back to
+// the vscode://file form, which still navigates).
+function renderProperties(data, docPath) {
   const entries = Object.entries(data);
   if (entries.length === 0) return '';
   const rows = entries.map(([key, value]) => {
@@ -536,7 +549,7 @@ function renderProperties(data) {
     const icon = ICONS[type] || ICONS.text;
     return `<tr class="mps-prop" data-type="${type}">`
       + `<td class="mps-prop-key"><span class="mps-prop-icon">${icon}</span><span class="mps-prop-name">${escapeHtml(key)}</span></td>`
-      + `<td class="mps-prop-value">${renderValue(value, type)}</td>`
+      + `<td class="mps-prop-value">${renderValue(value, type, docPath)}</td>`
       + `</tr>`;
   }).join('');
   return `<aside class="mps-properties" aria-label="Frontmatter properties"><div class="mps-properties-title">Properties</div><table class="mps-properties-table"><tbody>${rows}</tbody></table></aside>`;
@@ -1158,7 +1171,7 @@ function activate(context) {
         try {
           const data = parseFrontmatter(match[1]);
           if (data['mps-hide'] === true) return;
-          html = renderProperties(data);
+          html = renderProperties(data, docPathFromEnv(state.env));
         } catch (e) {
           html = `<div class="mps-properties-error">Failed to parse frontmatter: ${escapeHtml(e.message)}</div>`;
         }

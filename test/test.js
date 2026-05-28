@@ -3,7 +3,15 @@
 // markdown-it instance - no real markdown-it dependency.
 
 const assert = require('assert');
-const { activate } = require('../extension.js');
+const {
+  activate,
+  parseWikilinkTarget,
+  resolveWikilinkTarget,
+  addToIndex,
+  removeFromIndex,
+  __setWikiStateForTest,
+  __resetWikiStateForTest,
+} = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
 
@@ -184,8 +192,37 @@ test('URLs in string values are linkified', () => {
 
 test('wiki-link and URL coexist in the same string value', () => {
   const html = renderHtml('---\ndesc: see [[parent]] or https://example.com\n---');
+  // Unresolved (empty index) → document-relative raw name, unchanged behaviour.
   assert.match(html, /<a class="mps-wiki-link" href="parent">parent<\/a>/);
   assert.match(html, /<a href="https:\/\/example\.com">/);
+});
+
+// Frontmatter wikilinks resolve against the workspace index and honour alias
+// syntax, the same as body wikilinks - previously they emitted a literal
+// `href="name|alias"` and never resolved. (renderHtml runs with no env, so the
+// resolved href takes the vscode://file form; with a render env it would be
+// document-relative - covered by the body-renderer env tests.)
+test('frontmatter wikilink resolves against the index (Properties value)', () => {
+  __setWikiStateForTest({ index: (() => { const i = new Map(); addToIndex(i, '/root/notes/parent.md', ''); return i; })(), config: { enabled: true } });
+  try {
+    const html = renderHtml('---\nrelated: [[parent]]\n---');
+    assert.match(html, /href="vscode:\/\/file\/root\/notes\/parent\.md"/);
+    assert.match(html, />parent</);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+test('frontmatter wikilink honours alias and does not emit a literal pipe href', () => {
+  __setWikiStateForTest({ index: (() => { const i = new Map(); addToIndex(i, '/root/notes/meeting.md', ''); return i; })(), config: { enabled: true } });
+  try {
+    const html = renderHtml('---\nparent: [[meeting|Weekly sync]]\n---');
+    assert.match(html, />Weekly sync</);
+    assert.doesNotMatch(html, /meeting\|Weekly sync/); // no literal pipe anywhere
+    assert.match(html, /href="vscode:\/\/file\/root\/notes\/meeting\.md"/);
+  } finally {
+    __resetWikiStateForTest();
+  }
 });
 
 test('date-only formats as dd/mm/yyyy with no TZ shift', () => {
@@ -753,13 +790,6 @@ test('stub before() throws when target rule is not registered', () => {
 
 console.log('\nWikilink target parser:');
 
-const {
-  parseWikilinkTarget,
-  resolveWikilinkTarget,
-  __setWikiStateForTest,
-  __resetWikiStateForTest,
-} = require('../extension.js');
-
 test('parseWikilinkTarget: bare name', () => {
   assert.deepStrictEqual(parseWikilinkTarget('foo'), { name: 'foo', fragment: null, alias: null });
 });
@@ -915,8 +945,6 @@ test('removeFromIndex preserves other entries in the same bucket', () => {
 // ---- mps_wikilink with workspace resolution ---------------------------------
 
 console.log('\nWiki-link rule with workspace resolution:');
-
-const { addToIndex } = require('../extension.js');
 
 function withIndex(entries, fn) {
   const idx = new Map();
