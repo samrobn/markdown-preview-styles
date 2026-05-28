@@ -960,9 +960,14 @@ function activate(context) {
         // Derive parse lazily so the renderer keeps working when called
         // directly (frontmatter renderText, unit tests) with only .content.
         const parsed = (tok.meta && tok.meta.parsed) || parseWikilinkTarget(content);
+        // Display: alias if given; else the basename; else (pure fragment, no
+        // name) the fragment's own text - the heading/block id minus its
+        // leading marker - rather than the raw `#frag` content.
         const display = parsed.alias != null
           ? parsed.alias
-          : basenameWithoutExt(parsed.name || content);
+          : (parsed.name
+              ? basenameWithoutExt(parsed.name)
+              : (parsed.fragment ? parsed.fragment.slice(1) : content));
         // docPath (previewed document's path) is read from env at RENDER time -
         // see docPathFromEnv for why parse-time isn't reliable and why both
         // currentDocument and resourceProvider.resource are consulted.
@@ -976,9 +981,16 @@ function activate(context) {
         const meta = tok.meta || {};
         if (meta.resolvedPath) {
           href = buildResolvedHref(meta.resolvedPath, parsed.fragment, docPath);
+        } else if (parsed.name) {
+          // Unresolved named link: document-relative raw name + anchor.
+          href = safeHref(parsed.name + fragmentToAnchor(parsed.fragment));
+        } else if (parsed.fragment) {
+          // Pure fragment ([[#heading]] / [[^block]]): same-document anchor,
+          // no name. Using `content` here would double the fragment (content
+          // already IS the fragment) and feed safeHref a leading-# string.
+          href = fragmentToAnchor(parsed.fragment);
         } else {
-          const rawHref = (parsed.name || content) + fragmentToAnchor(parsed.fragment);
-          href = safeHref(rawHref);
+          href = safeHref(content);
         }
         // Tokens emitted by mps_embed for non-image embeds carry meta.embed so
         // the rendered anchor can be styled distinctly.

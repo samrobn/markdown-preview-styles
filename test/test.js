@@ -1235,6 +1235,34 @@ test('mps_wikilink rule: unresolved [[name]] falls back to inert span carrying d
   });
 });
 
+// Pure-fragment links ([[#heading]] / [[^block]]) render a single same-
+// document anchor with the fragment text as display - NOT the raw `#frag`
+// content doubled with a re-slugified copy (the bug the empty-name path
+// originally had: `(parsed.name || content) + fragmentToAnchor(...)` produced
+// `#Lists#lists`).
+test('mps_wikilink pure heading fragment [[#Heading]] emits a single same-document anchor', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[#Section Two]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="#section-two"/);
+    assert.doesNotMatch(html, /#section-two#/); // not doubled
+    assert.match(html, />Section Two</); // display is the heading text, not "#Section Two"
+  });
+});
+
+test('mps_wikilink pure block fragment [[^block]] emits a single same-document anchor', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[^my-block]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="#mps-block-my-block"/);
+    assert.match(html, />my-block</); // display is the block id, not "^my-block"
+  });
+});
+
 test('mps_wikilink rule: enabled=false skips index lookup, document-relative behaviour', () => {
   withIndex([{ absPath: '/root/foo.md' }], () => {
     __setWikiStateForTest({ config: { enabled: false } });
