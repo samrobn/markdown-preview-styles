@@ -124,10 +124,12 @@
       img.setAttribute('data-mps-original-src', img.getAttribute('src') || '');
 
       let loaded = false;
-      img.addEventListener('load', () => { loaded = true; });
+      let settled = false;
+      img.addEventListener('load', () => { loaded = true; settled = true; });
       img.addEventListener('error', handleError);
 
       function handleError() {
+        settled = true;
         // Lost-race protection on top of the load-listener: if the load
         // event managed to fire AND the error somehow fires later (browsers
         // shouldn't, but defence in depth), don't degrade a working image.
@@ -146,6 +148,7 @@
           const alreadyInAttachments = lc.includes('/attachments/') || lc.startsWith('attachments/');
           if (isBareFilename && !alreadyInAttachments) {
             img.setAttribute('src', 'attachments/' + currentSrc);
+            settled = false; // retry pending - allow load/error to fire again
             return;
           }
         }
@@ -155,14 +158,22 @@
       }
 
       // Race-guard for images that resolved BEFORE we attached listeners.
-      // `complete` is true once load OR error has been processed. See
-      // CLAUDE.md "naturalWidth === 0 is NOT a reliable broken-image signal"
-      // for why we don't check naturalWidth here. Instead, give the load
-      // listener one frame to fire; if `complete` is true and we still
-      // haven't seen a load event, the image errored before we wired up.
+      // Previous approach (frame-delay + `loaded` flag) misclassified cached
+      // images as broken: when VS Code's DOM diff cleared data-mps-wired on a
+      // still-loaded <img>, the rewire attached fresh listeners after the
+      // browser had already fired `load`. complete=true + loaded=false then
+      // triggered a false handleError.
+      //
+      // img.decode() is the race-free check: resolves iff the browser can
+      // decode the current bitmap (i.e. loaded successfully), rejects on any
+      // decode/network failure. Works identically for cache-hit and fresh-
+      // fetch, so the rewire path is now safe.
       if (img.complete) {
-        requestAnimationFrame(() => {
-          if (!loaded) handleError();
+        img.decode().then(() => {
+          loaded = true;
+          settled = true;
+        }).catch(() => {
+          if (!settled) handleError();
         });
       }
     }

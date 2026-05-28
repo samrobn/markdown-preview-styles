@@ -63,7 +63,16 @@ Wiki-links in body text get the same `.mps-wiki-link` styling as Properties valu
 
 **See**: [[related-document]] for background (one step → another step → final step).
 
-The version in backticks renders as literal text for contrast: `[[related-document]]`. Wiki-links are still not clickable.
+The version in backticks renders as literal text for contrast: `[[related-document]]`.
+
+### Link format comparison
+
+The same target file rendered two ways, so click behaviour can be compared side-by-side. The target lives at `test/visual/fixtures/notes/related-document.md`.
+
+| # | Source | Renders as | Click behaviour |
+|---|---|---|---|
+| 1 | `[[related-document]]` | [[related-document]] | Resolves via the workspace index to a path relative to the previewed document, so clicking opens the target in-place via VS Code's `openLink` channel - no prompt, preview mode. |
+| 2 | `[related (relative)](test/visual/fixtures/notes/related-document.md)` | [related (relative)](test/visual/fixtures/notes/related-document.md) | Standard markdown link with a workspace-relative path. Identical click behaviour to row 1. |
 
 ## Lists
 

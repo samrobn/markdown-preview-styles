@@ -34,6 +34,32 @@
     ],
     "markdown.previewScripts": [
       "./preview.js"
-    ]
+    ],
+    "configuration": {
+      "title": "Markdown Preview Styles",
+      "properties": {
+        "markdownPreviewStyles.wikilinks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Resolve [[wikilinks]] across the whole workspace. When off, wikilinks render with document-relative hrefs and no workspace index is built."
+        },
+        "markdownPreviewStyles.wikilinks.extraIndexRoots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional folders to index for wikilink resolution. Useful when you keep notes outside the open workspace (e.g. a personal vault). Absolute paths or tilde-prefixed (~/Documents/notes). Missing paths are skipped with a warning."
+        },
+        "markdownPreviewStyles.wikilinks.embedNotes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render ![[name]] for non-image targets as inline transclusions (the referenced note's body is rendered inline). When off, non-image embeds degrade to a wiki-link."
+        },
+        "markdownPreviewStyles.wikilinks.embedMaxBytes": {
+          "type": "number",
+          "default": 262144,
+          "description": "Maximum file size (bytes) for an inline note transclusion. Larger targets degrade to a wiki-link to protect the preview from accidentally embedding huge files."
+        }
+      }
+    }
   }
 }

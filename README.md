@@ -52,9 +52,42 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
 - Inline code (backtick-quoted spans) shrunk to `0.9em`. Fenced code blocks inside `<pre>` are untouched.
 - Renders YAML frontmatter as a Properties table with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
-- Auto-links `https://...` URLs in Properties values; styles `[[wiki-links]]` everywhere (in Properties values and document body) as `<a>` tags with basename-without-extension visible text - so `[[notes/2026-meeting]]` displays as `2026-meeting`. VS Code's webview resolves relative `href`s on click via the document-link handler.
-- Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Path resolution is document-relative; bare filenames are retried under `attachments/` on first error. Non-image extensions degrade to a wiki-link rather than an embed. Failed loads show a dashed placeholder with the original path.
+- Resolves `[[wiki-links]]` against a **workspace-wide index** of every `.md` file under the open folders (plus any extra roots configured via `markdownPreviewStyles.wikilinks.extraIndexRoots`). Case-insensitive basename match; shortest-path tiebreak on collision. Supports the full Obsidian/Foam syntax matrix - see [Wikilink syntax](#wikilink-syntax) below.
+- Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Bare filenames are retried under `attachments/` on first error. Failed loads show a dashed placeholder with the original path.
+- Renders `![[note]]` (non-image) embeds **inline** as transclusions - the referenced note's body (frontmatter stripped) renders inside an `mps-embed-note` container. Optional `#heading` or `^block` fragment narrows the embed to that section. Recursive embeds are capped at depth 2 to prevent cycles.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
+
+## Wikilink syntax
+
+| Form | Renders as |
+|---|---|
+| `[[name]]` | Link to `name.md` (resolved workspace-wide by basename). |
+| `[[name\|alias]]` | Link to `name.md`, displaying `alias`. Pipe-after-name (Obsidian/Foam convention - not GitHub Wiki's pipe-before-name). |
+| `[[name#heading]]` | Link to `name.md` and scroll to `#heading`. |
+| `[[name^block]]` | Link to `name.md` and scroll to the paragraph or list-item carrying a trailing `^block` marker. |
+| `[[name#heading\|alias]]` | Combined - canonical fragment-before-pipe order. |
+| `![[image.png]]` | Inline image (with optional `\|N` for width). |
+| `![[name]]` | Inline transclusion of the referenced note's body. |
+| `![[name#heading]]` / `![[name^block]]` | Inline transclusion narrowed to that section/block. |
+
+Reverse-order combined forms (`[[name|alias#heading]]`) are **not supported** - the trailing `#heading` becomes part of the alias display text and there is no anchor jump. The canonical fragment-before-pipe order matches Obsidian and the `markdown-it-wikilinks` parser.
+
+Resolution is **case-insensitive on basename**. Multiple matches resolve by shortest path (fewest separators), then alphabetical within the same depth. When indexing multiple roots (workspace folders + `extraIndexRoots`), entries are ordered alphabetically by root path first - so shortest-path only carries meaning *within* a single root.
+
+To pin a block as a scroll target, append `^my-id` at the end of a paragraph or list item. The extension strips the marker from the rendered text and adds `id="mps-block-my-id"` to the wrapping element so links can scroll to it.
+
+## Settings
+
+All settings live under `markdownPreviewStyles.wikilinks.*`:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `true` | Master switch. Off = document-relative resolution (no workspace index). |
+| `extraIndexRoots` | `[]` | Extra folders to index alongside the open workspace. Useful when you keep notes outside the workspace (e.g. `~/Documents/notes`). Tilde-prefixed paths are expanded. Missing paths are skipped with a warning. |
+| `embedNotes` | `true` | Whether `![[name]]` for non-image targets renders inline (`true`) or as a link with the `mps-embed-fallback` style (`false`). |
+| `embedMaxBytes` | `262144` (256KB) | File size cap for inline transclusion. Larger targets degrade to a link. |
+
+The four keys appear in VS Code's Settings UI under "Markdown Preview Styles → Wikilinks".
 
 ## Supported frontmatter
 
@@ -64,9 +97,10 @@ Date-only values are formatted without timezone shift so the day always matches 
 
 ## Known limitations
 
-- **Wiki-link resolution is document-relative, not vault-wide.** A bare `[[note-name]]` won't find `note-name.md` somewhere else in the workspace - it tries to resolve relative to the current file. For image embeds, the resolver also retries with an `attachments/` prefix on first error. Vault-wide basename resolution would need a workspace index and is out of scope for now.
-- **Wiki-link `<a>` clicks go through VS Code's webview link handler.** Non-existent targets surface a "file not found" toast rather than navigating anywhere - no in-preview broken-link styling.
-- **Image embed visible-text change.** Wiki-link display text is the path's basename without extension (matches Obsidian). Existing notes that used directory-prefixed wiki-links like `[[notes/2026-meeting]]` now show just `2026-meeting`. The full path remains in the `href`.
+- **Workspace index is built asynchronously on activation.** Open previews are refreshed automatically once the index finishes building, but there's a brief window where wikilinks render with document-relative hrefs before the refresh fires.
+- **Watcher behaviour on iCloud-synced roots is noisy.** If you point `extraIndexRoots` at an iCloud folder, the file watcher fires on sync events as well as edits. Index correctness is unaffected; CPU may briefly spike on heavy sync activity.
+- **Wiki-link `<a>` clicks go through VS Code's webview link handler.** Non-existent targets (no index match and no document-relative file) surface a "file not found" toast rather than navigating anywhere - no in-preview broken-link styling.
+- **Cross-root collision ordering.** When two indexed roots both contain a file with the same basename, the resolver orders entries alphabetically by root path then by relative path. "Shortest path" only applies within a single root.
 
 ## Development
 

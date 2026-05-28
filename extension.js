@@ -2,7 +2,222 @@
 // Extracts YAML frontmatter from each preview's source and prepends a
 // Properties table above the rendered markdown. Non-editable in v1.
 
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
 const FRONTMATTER_RE = /^---\r?\n([\s\S]+?)\r?\n---\s*(?:\r?\n|$)/;
+
+// ---- Wikilink resolver state -----------------------------------------------
+//
+// Module-level state populated by activate(context). The extendMarkdownIt
+// rules close over these via the accessor functions below, so tests can
+// swap state without re-registering rules.
+//
+// `wikiIndex` is a Map<basenameLowercase, string[]> of absolute paths. Each
+// bucket is pre-sorted: within a single indexed root, ascending by separator
+// count then alphabetical (so resolveWikilinkTarget can return the head).
+// Across roots (multi-root + extraIndexRoots), entries are interleaved by
+// alphabetical-by-root-path, then by relative-path within the root.
+let wikiIndex = new Map();
+let wikiConfig = {
+  enabled: true,
+  extraIndexRoots: [],
+  embedNotes: true,
+  embedMaxBytes: 262144,
+};
+// Roots are tracked alongside the index for cross-root tiebreak ordering.
+// Each entry is { absPath, sortKey } - sortKey is the canonicalised path
+// used for ordering. Filled by activate(); empty in unit tests.
+let wikiRoots = [];
+
+// Injectable for tests so transclusion can run without real disk I/O.
+let wikiReadFile = (absPath) => fs.readFileSync(absPath, 'utf8');
+let wikiStatFile = (absPath) => fs.statSync(absPath);
+
+function __setWikiStateForTest(state) {
+  if (state.index !== undefined) wikiIndex = state.index;
+  if (state.config !== undefined) wikiConfig = { ...wikiConfig, ...state.config };
+  if (state.roots !== undefined) wikiRoots = state.roots;
+  if (state.readFile !== undefined) wikiReadFile = state.readFile;
+  if (state.statFile !== undefined) wikiStatFile = state.statFile;
+}
+
+function __resetWikiStateForTest() {
+  wikiIndex = new Map();
+  wikiConfig = { enabled: true, extraIndexRoots: [], embedNotes: true, embedMaxBytes: 262144 };
+  wikiRoots = [];
+  wikiReadFile = (absPath) => fs.readFileSync(absPath, 'utf8');
+  wikiStatFile = (absPath) => fs.statSync(absPath);
+}
+
+// Parse the inner content of a [[...]] or ![[...]] into its three parts.
+// Canonical order is fragment-before-pipe: `name(#heading|^block)?(\|alias)?`.
+// Reverse order (`name|alias#heading`) is NOT recognised - the pipe wins,
+// so `alias#heading` is the literal label and the trailing fragment is part
+// of the display text rather than a scroll target. This matches Obsidian's
+// canonical form and `markdown-it-wikilinks`' native parse.
+function parseWikilinkTarget(inner) {
+  if (typeof inner !== 'string') return { name: '', fragment: null, alias: null };
+  // Split at the FIRST pipe. Everything to the right is the alias verbatim.
+  const pipeIdx = inner.indexOf('|');
+  const namePart = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
+  const alias = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : null;
+  // Fragment lives on the name side. `#heading` or `^block` - first one wins.
+  // Match at end of namePart so a `#` in the basename (unlikely but legal)
+  // doesn't get confused with a heading.
+  const fragMatch = namePart.match(/^(.+?)([#^][^#^]+)$/);
+  const name = fragMatch ? fragMatch[1] : namePart;
+  const fragment = fragMatch ? fragMatch[2] : null;
+  return { name, fragment, alias };
+}
+
+// Sort comparator for an index bucket. Across roots (multi-root + extra),
+// the root sort key dominates. Within a single root, ascending by separator
+// count (shortest path wins on basename collision), then alphabetical for a
+// deterministic final tiebreak. Roots are sorted alphabetically by their
+// canonicalised path so "shortest path" only carries meaning within one root.
+function indexBucketCompare(a, b) {
+  if (a.rootSortKey !== b.rootSortKey) {
+    return a.rootSortKey < b.rootSortKey ? -1 : 1;
+  }
+  const sepA = (a.absPath.match(/\//g) || []).length;
+  const sepB = (b.absPath.match(/\//g) || []).length;
+  if (sepA !== sepB) return sepA - sepB;
+  return a.absPath < b.absPath ? -1 : (a.absPath > b.absPath ? 1 : 0);
+}
+
+function addToIndex(index, absPath, rootSortKey) {
+  const basename = path.basename(absPath, path.extname(absPath)).toLowerCase();
+  const bucket = index.get(basename) || [];
+  if (bucket.some(e => e.absPath === absPath)) return;
+  bucket.push({ absPath, rootSortKey: rootSortKey || '' });
+  bucket.sort(indexBucketCompare);
+  index.set(basename, bucket);
+}
+
+function removeFromIndex(index, absPath) {
+  const basename = path.basename(absPath, path.extname(absPath)).toLowerCase();
+  const bucket = index.get(basename);
+  if (!bucket) return;
+  const filtered = bucket.filter(e => e.absPath !== absPath);
+  if (filtered.length === 0) index.delete(basename);
+  else index.set(basename, filtered);
+}
+
+// Resolve a wikilink target name (already stripped of fragment and alias)
+// to an absolute path via the workspace index. Returns null on miss.
+// Case-insensitive on the basename to match Obsidian. Tolerates a trailing
+// `.md` (Obsidian writes `[[name]]` for `name.md` but accepts `[[name.md]]`)
+// and a folder prefix in the wikilink (`[[folder/name]]` - Foam/Dendron form)
+// by looking up only the final basename.
+function resolveWikilinkTarget(name, indexOverride) {
+  const idx = indexOverride || wikiIndex;
+  if (!name) return null;
+  const stripped = name.replace(/\.md$/i, '');
+  const basename = stripped.replace(/^.*\//, '').toLowerCase();
+  const hits = idx.get(basename);
+  if (!hits || hits.length === 0) return null;
+  return hits[0].absPath;
+}
+
+// Strip YAML frontmatter from a markdown source string.
+function stripFrontmatter(src) {
+  return src.replace(FRONTMATTER_RE, '');
+}
+
+// Slice a markdown source string to the section under `#heading` or the
+// single block carrying `^block-id`. Returns the full body when fragment
+// is null. Returns '' when the fragment isn't found - caller decides
+// whether that's a fallback condition.
+function sliceToFragment(src, fragment) {
+  if (!fragment) return src;
+  if (fragment[0] === '^') {
+    const id = fragment.slice(1);
+    const re = new RegExp('^(.*\\s\\^' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\s*$', 'm');
+    const m = src.match(re);
+    return m ? m[1].replace(/\s+\^[A-Za-z0-9_-]+\s*$/, '') : '';
+  }
+  // Heading fragment: find a heading line matching (case-insensitive,
+  // slug-equivalent) the requested heading, take content until the next
+  // same-or-higher-level heading.
+  const wantSlug = fragment.slice(1).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_]/g, '');
+  const lines = src.split(/\r?\n/);
+  let startIdx = -1;
+  let startLevel = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (!m) continue;
+    const slug = m[2].toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_]/g, '');
+    if (slug === wantSlug) {
+      startIdx = i + 1;
+      startLevel = m[1].length;
+      break;
+    }
+  }
+  if (startIdx < 0) return '';
+  const out = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+/);
+    if (m && m[1].length <= startLevel) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+// Try to emit an mps_embed_note token for a non-image embed target.
+// Returns true if a transclude token was pushed (caller skips the
+// wiki-link fallback). Returns false on any condition that prevents
+// transclusion - the caller's wiki-link fallback then runs.
+function tryEmitTranscludeToken(state, path) {
+  if (!wikiConfig.enabled || !wikiConfig.embedNotes) return false;
+  const parsed = parseWikilinkTarget(path);
+  if (!parsed.name) return false;
+  const resolved = resolveWikilinkTarget(parsed.name);
+  if (!resolved) return false;
+  // Cheap size gate before reading. Skip if stat fails - the renderer
+  // will surface the failure via the cycle/fallback path.
+  try {
+    const stat = wikiStatFile(resolved);
+    if (stat.size > wikiConfig.embedMaxBytes) return false;
+  } catch (_) {
+    return false;
+  }
+  const tok = state.push('mps_embed_note', '', 0);
+  tok.meta = {
+    resolvedPath: resolved,
+    fragment: parsed.fragment,
+    alias: parsed.alias,
+    originalTarget: path,
+  };
+  return true;
+}
+
+// Convert a parsed fragment into the URL-anchor form used in hrefs.
+// `#heading` → `#heading-slug`. `^block` → `#mps-block-<id>`. null → ''.
+// Heading slug matches markdown-it's default header anchor convention:
+// lowercase, whitespace → '-', strip everything other than [a-z0-9-_].
+function fragmentToAnchor(fragment) {
+  if (!fragment) return '';
+  if (fragment[0] === '^') {
+    return '#mps-block-' + fragment.slice(1);
+  }
+  // Heading fragment.
+  const slug = fragment.slice(1)
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9\-_]/g, '');
+  return '#' + slug;
+}
+
+// Expand `~` and `~/...` in a path string. No-op on absolute paths.
+function expandTilde(p) {
+  if (typeof p !== 'string' || !p.startsWith('~')) return p;
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  return p; // ~user form not supported - rare and platform-specific
+}
+
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => (
@@ -263,7 +478,150 @@ function renderProperties(data) {
   return `<aside class="mps-properties" aria-label="Frontmatter properties"><div class="mps-properties-title">Properties</div><table class="mps-properties-table"><tbody>${rows}</tbody></table></aside>`;
 }
 
-function activate() {
+// Build the workspace index from VS Code's workspace API. Returns an
+// array of { vscode, watchers } so deactivate can dispose. No-op outside
+// of a VS Code host (vscode require throws in unit tests / Node-only runs).
+async function initWorkspaceIndex(context) {
+  let vscode;
+  try {
+    vscode = require('vscode');
+  } catch (_) {
+    return; // Not running inside VS Code (unit test or harness). Skip.
+  }
+
+  const config = vscode.workspace.getConfiguration('markdownPreviewStyles.wikilinks');
+  wikiConfig = {
+    enabled: config.get('enabled', true),
+    extraIndexRoots: config.get('extraIndexRoots', []),
+    embedNotes: config.get('embedNotes', true),
+    embedMaxBytes: config.get('embedMaxBytes', 262144),
+  };
+
+  // Hot-reload when the user flips settings.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('markdownPreviewStyles.wikilinks')) {
+        rebuildWorkspaceIndex(context, vscode).catch(err =>
+          console.warn('markdown-preview-styles: index rebuild failed', err)
+        );
+      }
+    })
+  );
+
+  // Initial build. (rebuildWorkspaceIndex triggers a preview refresh on
+  // completion so previews opened before the index built pick up resolution.)
+  await rebuildWorkspaceIndex(context, vscode);
+
+  // React to workspace folder add/remove without forcing a full reload.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      rebuildWorkspaceIndex(context, vscode).catch(err =>
+        console.warn('markdown-preview-styles: index rebuild failed', err)
+      );
+    })
+  );
+}
+
+// Watchers from the previous rebuild - disposed before each fresh build.
+let _activeWatchers = [];
+
+async function rebuildWorkspaceIndex(context, vscode) {
+  // Re-read config in case this rebuild was triggered by a config change.
+  const config = vscode.workspace.getConfiguration('markdownPreviewStyles.wikilinks');
+  wikiConfig = {
+    enabled: config.get('enabled', true),
+    extraIndexRoots: config.get('extraIndexRoots', []),
+    embedNotes: config.get('embedNotes', true),
+    embedMaxBytes: config.get('embedMaxBytes', 262144),
+  };
+
+  // Tear down previous watchers.
+  for (const w of _activeWatchers) w.dispose();
+  _activeWatchers = [];
+
+  wikiIndex = new Map();
+  wikiRoots = [];
+
+  if (!wikiConfig.enabled) return;
+
+  // Collect roots: workspace folders + extraIndexRoots, deduplicated by
+  // canonical absolute path. Missing extra roots are warned-and-skipped.
+  const seen = new Set();
+  const roots = [];
+  for (const folder of (vscode.workspace.workspaceFolders || [])) {
+    const canonical = canonicalisePath(folder.uri.fsPath);
+    if (canonical && !seen.has(canonical)) {
+      seen.add(canonical);
+      roots.push({ absPath: folder.uri.fsPath, canonical });
+    }
+  }
+  for (const raw of wikiConfig.extraIndexRoots) {
+    const expanded = expandTilde(raw);
+    const canonical = canonicalisePath(expanded);
+    if (!canonical) {
+      console.warn('markdown-preview-styles: extraIndexRoots path not found, skipping:', raw);
+      continue;
+    }
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    roots.push({ absPath: expanded, canonical });
+  }
+
+  wikiRoots = roots;
+
+  // findFiles + watcher per root. Per-root patterns keep the watcher set
+  // explicit and let us tag each indexed path with its root's sort key.
+  for (const root of roots) {
+    const rootSortKey = root.canonical;
+    const pattern = new vscode.RelativePattern(root.absPath, '**/*.md');
+    const exclude = '**/node_modules/**';
+    try {
+      const uris = await vscode.workspace.findFiles(pattern, exclude);
+      for (const uri of uris) addToIndex(wikiIndex, uri.fsPath, rootSortKey);
+    } catch (err) {
+      console.warn('markdown-preview-styles: findFiles failed for root', root.absPath, err);
+    }
+
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    watcher.onDidCreate(uri => addToIndex(wikiIndex, uri.fsPath, rootSortKey));
+    watcher.onDidDelete(uri => removeFromIndex(wikiIndex, uri.fsPath));
+    // onDidChange is a no-op - content edits don't move the file.
+    _activeWatchers.push(watcher);
+    context.subscriptions.push(watcher);
+  }
+
+  // Refresh any already-open markdown previews. They may have rendered
+  // against an empty or stale index; the refresh re-runs the rules with
+  // the now-current wikiIndex/wikiConfig in scope. No-op when no previews
+  // are open. Wrapped because the command may be unavailable in some
+  // VS Code builds.
+  try {
+    await vscode.commands.executeCommand('markdown.preview.refresh');
+  } catch (_) {}
+}
+
+// Returns the canonical (realpath-resolved) absolute path, or null if the
+// path doesn't exist or isn't accessible. Used to deduplicate symlinked or
+// overlapping roots without crashing on missing extraIndexRoots entries.
+function canonicalisePath(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch (_) {
+    return null;
+  }
+}
+
+function activate(context) {
+  // Async index build runs in the background. Rules registered by
+  // extendMarkdownIt close over wikiIndex/wikiConfig which start at sensible
+  // defaults and get replaced once findFiles completes. Any preview that
+  // rendered against the empty initial index gets a programmatic refresh
+  // when the build finishes (see rebuildWorkspaceIndex tail).
+  if (context && context.subscriptions) {
+    initWorkspaceIndex(context).catch(err =>
+      console.warn('markdown-preview-styles: index init failed', err)
+    );
+  }
   return {
     extendMarkdownIt(md) {
       // ![[path]] and ![[path|N]] - Obsidian-style image embeds.
@@ -348,12 +706,15 @@ function activate() {
             altTok.content = altText;
             tok.children = [altTok];
           } else {
-            // Non-image OR image-shaped-but-rejected-scheme. Degrade to a
-            // wiki-link. Mark with meta.embed so CSS / future code can
-            // distinguish a degraded embed from a plain [[wiki-link]].
-            const tok = state.push('mps_wikilink', '', 0);
-            tok.content = path;
-            tok.meta = { embed: true };
+            // Non-image OR image-shaped-but-rejected-scheme. Try transcluding
+            // (when enabled, target resolves, and size is under cap); otherwise
+            // degrade to a wiki-link with meta.embed for the fallback style.
+            const transcluded = tryEmitTranscludeToken(state, path);
+            if (!transcluded) {
+              const tok = state.push('mps_wikilink', '', 0);
+              tok.content = path;
+              tok.meta = { embed: true };
+            }
           }
         }
         state.pos = end + 2;
@@ -378,28 +739,213 @@ function activate() {
         if (!silent) {
           const token = state.push('mps_wikilink', '', 0);
           token.content = content;
+          // Parse + resolve at token-emit time so the renderer is a pure
+          // function over the token's meta. Resolution is skipped when the
+          // workspace index is disabled - the renderer then falls back to
+          // emitting `content` as a relative href (current behaviour).
+          const parsed = parseWikilinkTarget(content);
+          token.meta = token.meta || {};
+          token.meta.parsed = parsed;
+          if (wikiConfig.enabled) {
+            const resolved = resolveWikilinkTarget(parsed.name);
+            if (resolved) {
+              token.meta.resolvedPath = resolved;
+              // Document URI lookup happens at RENDER time, not parse time.
+              // VS Code's inline rules run before `env` is populated with
+              // `currentDocument`, so probing state.env here returns an empty
+              // object. The renderer rule receives env as its 4th arg, and
+              // by that point currentDocument is available.
+            }
+          }
         }
         state.pos = end + 2;
         return true;
       });
-      md.renderer.rules.mps_wikilink = function (tokens, idx) {
+      // Renderer for the inline transclude token emitted by mps_embed's
+      // non-image branch. Reads the resolved file, slices to the fragment,
+      // strips frontmatter, and re-renders via the same markdown-it
+      // instance with env.mpsEmbedDepth incremented. Depth >= 2 short-
+      // circuits to a cycle-fallback link (matches the depth-cap AC).
+      md.renderer.rules.mps_embed_note = function (tokens, idx, options, env, self) {
         const tok = tokens[idx];
-        const content = tok.content;
-        const display = basenameWithoutExt(content);
-        const href = safeHref(content);
+        const meta = tok.meta || {};
+        const e = env || {};
+        const depth = e.mpsEmbedDepth || 0;
+        // Cycle-cap: at depth 2, refuse to expand. Render as a wiki-link
+        // styled with mps-embed-cycle so it's visually distinct from a
+        // fresh embed.
+        if (depth >= 2) {
+          return `<a class="mps-wiki-link mps-embed-fallback mps-embed-cycle" href="${escapeHtml(meta.resolvedPath || '')}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
+        }
+        let body = '';
+        try {
+          const raw = wikiReadFile(meta.resolvedPath);
+          const stripped = stripFrontmatter(raw);
+          const sliced = sliceToFragment(stripped, meta.fragment);
+          if (!sliced) {
+            // Fragment not found in target. Surface as fallback - matches
+            // the broken-resolution path.
+            return `<a class="mps-wiki-link mps-embed-fallback" href="${escapeHtml(meta.resolvedPath)}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
+          }
+          const innerEnv = Object.assign({}, e, { mpsEmbedDepth: depth + 1 });
+          if (typeof md.render === 'function') {
+            body = md.render(sliced, innerEnv);
+          } else {
+            // Stub markdown-it in unit tests has no render(). Emit the raw
+            // sliced source so the wrapper assertion still passes; the real
+            // VS Code preview path uses the live md.render.
+            body = escapeHtml(sliced);
+          }
+        } catch (err) {
+          // Read failure (race with index, permissions). Fall back to a
+          // link rather than crashing the whole preview render.
+          return `<a class="mps-wiki-link mps-embed-fallback" href="${escapeHtml(meta.resolvedPath || '')}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
+        }
+        return `<div class="mps-embed-note" data-source="${escapeHtml(meta.resolvedPath)}"><div class="mps-embed-note-body">${body}</div></div>`;
+      };
+
+      md.renderer.rules.mps_wikilink = function (tokens, idx, options, env) {
+        const tok = tokens[idx];
+        const content = tok.content || '';
+        // Derive parse lazily so the renderer keeps working when called
+        // directly (frontmatter renderText, unit tests) with only .content.
+        const parsed = (tok.meta && tok.meta.parsed) || parseWikilinkTarget(content);
+        const display = parsed.alias != null
+          ? parsed.alias
+          : basenameWithoutExt(parsed.name || content);
+        // Pull the previewed document's path from env at RENDER time. VS Code
+        // populates env with `{ currentDocument, containingImages, slugifier,
+        // resourceProvider }` for the markdown preview.
+        //
+        // currentDocument is a vscode.Uri, NOT a TextDocument - verified
+        // against the 1.122 bundle, where MarkdownEngine.render builds
+        // `currentDocument: typeof e == "string" ? void 0 : e.uri`. A Uri
+        // exposes `.fsPath` directly and has NO `.uri` property, so the path
+        // is at `cd.fsPath`. The older `cd.uri.fsPath` access (TextDocument
+        // shape) is kept as a fallback in case the env shape changes back.
+        //
+        // BUT currentDocument is undefined on the incremental render path:
+        // when you type into a preview-to-the-side, VS Code calls
+        // MarkdownEngine.render with the spliced document TEXT (a string), and
+        // the string branch sets `currentDocument: void 0`. So relying on
+        // currentDocument alone re-introduces the vscode://file fallback after
+        // every keystroke. env.resourceProvider is the MarkdownPreview itself
+        // (passed identically on both render paths) and exposes `.resource`
+        // (the previewed document's Uri) - so it survives the incremental path.
+        const cd = env && env.currentDocument;
+        const rp = env && env.resourceProvider;
+        const docPath = (cd && cd.fsPath) ||
+                        (cd && cd.uri && cd.uri.fsPath) ||
+                        (rp && rp.resource && rp.resource.fsPath) ||
+                        (env && env.resource && env.resource.fsPath) ||
+                        null;
+        // Build the href. Three paths:
+        //   1. Resolved + docPath known → emit a path relative from the
+        //      previewed document to the resolved target. VS Code's preview
+        //      click handler sees a schemeless string, posts an `openLink`
+        //      message, and the extension host's resolveLinkTarget interprets
+        //      it as relative-to-preview-doc. This is the path the built-in
+        //      `[text](relative.md)` links take - in-preview navigation, no
+        //      OS prompt, opens in preview mode rather than raw editor.
+        //   2. Resolved but docPath unknown → fall back to `vscode://file/...`
+        //      URI. The `vscode:` scheme is in the link-handler allowlist
+        //      (http/https/mailto/vscode/vscode-insiders), so the browser
+        //      hands off to the OS, which routes `vscode://` back to VS Code
+        //      and opens the file. Costs one OS prompt and opens in raw editor
+        //      mode rather than preview, but works across any path.
+        //   3. No index hit → fall back to safeHref-guarded raw name.
+        // Other formats tried during smoke-testing - all wrong:
+        //   - bare absolute `/abs/...` → resolveDocumentLink treats it as
+        //     relative-to-preview-dir and concatenates → ENOENT on the
+        //     doubled path.
+        //   - `file://` URI → click handler sees a scheme but it's not in
+        //     the allowlist AND it matches the no-scheme negative test, so
+        //     the click is silently dropped.
+        // Resolver output is sourced from vscode.workspace.findFiles and
+        // therefore not user-controlled, so safeHref's file:-rejection
+        // doesn't apply to paths 1 and 2 - the resolver IS the validation.
+        let href;
+        const meta = tok.meta || {};
+        if (meta.resolvedPath && docPath) {
+          // path.relative needs the FROM directory, not file. Cross-platform
+          // safe because path.relative handles separators per-platform.
+          let rel = path.relative(path.dirname(docPath), meta.resolvedPath);
+          // On Windows, path.relative uses backslashes. Normalise to forward
+          // slashes for URL form. POSIX paths already use forward slashes.
+          rel = rel.split(path.sep).join('/');
+          href = encodeURI(rel) + fragmentToAnchor(parsed.fragment);
+        } else if (meta.resolvedPath) {
+          href = 'vscode://file' + encodeURI(meta.resolvedPath) + fragmentToAnchor(parsed.fragment);
+        } else {
+          const rawHref = (parsed.name || content) + fragmentToAnchor(parsed.fragment);
+          href = safeHref(rawHref);
+        }
         // Tokens emitted by mps_embed for non-image embeds carry meta.embed
-        // so the rendered anchor can be styled distinctly (an attachment
-        // icon, dimmer treatment, etc). Without this signal the degraded
-        // embed renders identically to a plain [[wiki-link]] - the user
-        // gets no indication the embed didn't render inline.
-        const cls = tok.meta && tok.meta.embed
-          ? 'mps-wiki-link mps-embed-fallback'
-          : 'mps-wiki-link';
+        // so the rendered anchor can be styled distinctly. Cycle-degraded
+        // embeds carry meta.embedCycle for a separate class.
+        const classes = ['mps-wiki-link'];
+        if (tok.meta && tok.meta.embed) classes.push('mps-embed-fallback');
+        if (tok.meta && tok.meta.embedCycle) classes.push('mps-embed-cycle');
+        const cls = classes.join(' ');
         // Empty href falls back to the inert span - covers [[javascript:...]]
         // and similar dangerous schemes.
         if (!href) return `<span class="${cls}">${escapeHtml(display)}</span>`;
         return `<a class="${cls}" href="${escapeHtml(href)}">${escapeHtml(display)}</a>`;
       };
+
+      // Block-ref anchors: `^block-id` at the end of a paragraph or list item
+      // creates a scroll target. Walks the token stream looking for inline
+      // tokens whose content ends with ` ^id`, strips the marker, and adds
+      // `id="mps-block-<id>"` to the wrapping block-level open token.
+      // Runs unconditionally so any preview containing ^id markers gets the
+      // anchor regardless of whether a wikilink targets it. Must run before
+      // mps_callouts so a marker on a callout's first line still works.
+      md.core.ruler.push('mps_block_anchors', function (state) {
+        const tokens = state.tokens;
+        for (let i = 0; i < tokens.length; i++) {
+          const tok = tokens[i];
+          if (tok.type !== 'inline' || !tok.content) continue;
+          // Trailing block marker: optional whitespace, then ^id (Crockford-
+          // safe alphanumerics + hyphen), then end of content.
+          const m = tok.content.match(/^([\s\S]*?)\s\^([A-Za-z0-9_-]+)\s*$/);
+          if (!m) continue;
+          // Find the wrapping block-level open token. Walk backwards from
+          // this inline token; the open is the most recent token whose
+          // .nesting === 1 at the same level - 1 of this inline (which sits
+          // at level = open.level + 1). For our purposes, scan back for the
+          // first open token whose tag is one of the carriers we recognise.
+          let openIdx = -1;
+          for (let j = i - 1; j >= 0; j--) {
+            const t = tokens[j];
+            if (t.nesting === -1) continue; // skip close tokens
+            // Prefer list_item_open if it directly precedes; else fall back
+            // to paragraph_open / heading_open as the carrier.
+            if (t.type === 'paragraph_open' || t.type === 'heading_open') {
+              openIdx = j;
+              // Look one more step back: if the immediately preceding open
+              // is list_item_open at the same source line, hoist to it so
+              // the anchor lands on the <li> not the inner <p>.
+              const prev = tokens[j - 1];
+              if (prev && prev.type === 'list_item_open') openIdx = j - 1;
+              break;
+            }
+            if (t.type === 'list_item_open') { openIdx = j; break; }
+            if (t.nesting === 1) { openIdx = j; break; }
+          }
+          if (openIdx < 0) continue;
+          tokens[openIdx].attrSet('id', 'mps-block-' + m[2]);
+          // Strip the marker from inline content and re-parse children if
+          // the inline parser is available (real markdown-it). Stub markdown-it
+          // in tests has no inline.parse, so leave children as-is - tests
+          // assert on .content, which is the load-bearing surface.
+          tok.content = m[1].replace(/\s+$/, '');
+          if (state.md && state.md.inline && typeof state.md.inline.parse === 'function') {
+            const out = [];
+            state.md.inline.parse(tok.content, state.md, state.env || {}, out);
+            tok.children = out;
+          }
+        }
+      });
 
       // Obsidian-style callouts: `> [!type] Optional title` at the start of a
       // blockquote becomes a div with separated title + body. Has to run before
@@ -596,3 +1142,10 @@ function activate() {
 }
 
 exports.activate = activate;
+exports.parseWikilinkTarget = parseWikilinkTarget;
+exports.resolveWikilinkTarget = resolveWikilinkTarget;
+exports.addToIndex = addToIndex;
+exports.removeFromIndex = removeFromIndex;
+exports.expandTilde = expandTilde;
+exports.__setWikiStateForTest = __setWikiStateForTest;
+exports.__resetWikiStateForTest = __resetWikiStateForTest;
