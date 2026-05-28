@@ -1287,6 +1287,118 @@ test('mps_embed_note renderer wraps content in mps-embed-note container', () => 
   });
 });
 
+// ---- Embed / fallback href construction -------------------------------------
+
+console.log('\nEmbed fallback hrefs:');
+
+const RENDER_ENV = { currentDocument: { fsPath: '/root/docs/current.md' } };
+
+// #1: the three mps_embed_note degrade paths (cycle cap, fragment-miss, read
+// error) must emit a clickable href via buildResolvedHref - a path relative to
+// the previewed document - NOT the bare absolute resolvedPath that VS Code
+// can't navigate (it concatenates onto the preview dir -> ENOENT).
+test('mps_embed_note cycle-cap fallback emits a document-relative href, not a bare absolute path', () => {
+  withTranscludeFixtures({ '/root/notes/foo.md': '# Foo\n\nbody' }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    // Force the cycle cap by rendering at depth 2.
+    const env = Object.assign({ mpsEmbedDepth: 2 }, RENDER_ENV);
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, env);
+    assert.match(html, /class="[^"]*mps-embed-cycle[^"]*"/);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="\/root/); // not the bare absolute path
+  });
+});
+
+test('mps_embed_note read-error fallback emits a document-relative href, not a bare absolute path', () => {
+  // Target is indexed (so resolvedPath is set) but readFile throws (not in
+  // the fixtures map) -> the catch fallback fires.
+  const idx = new Map();
+  addToIndex(idx, '/root/notes/foo.md', '');
+  __setWikiStateForTest({
+    index: idx,
+    config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 },
+    readFile: () => { throw new Error('ENOENT'); },
+    statFile: () => ({ size: 10 }),
+  });
+  try {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="\/root/);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+// #12: fallback display text comes from the parsed target, so an alias shows
+// cleanly instead of the literal "name|alias".
+test('mps_embed_note fallback shows the alias, not the raw name|alias label', () => {
+  const idx = new Map();
+  addToIndex(idx, '/root/notes/foo.md', '');
+  __setWikiStateForTest({
+    index: idx,
+    config: { enabled: true, embedNotes: true, embedMaxBytes: 262144 },
+    readFile: () => { throw new Error('ENOENT'); },
+    statFile: () => ({ size: 10 }),
+  });
+  try {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo|Nice Alias]]');
+    const html = md.renderer.rules.mps_embed_note(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, />Nice Alias</);
+    assert.doesNotMatch(html, /foo\|Nice Alias/);
+  } finally {
+    __resetWikiStateForTest();
+  }
+});
+
+// #2: a resolvable target that simply wasn't transcluded (embedNotes off, or
+// over the size cap) must keep a working href, not degrade to a dead bare name.
+test('embedNotes=false resolvable ![[name]] keeps a document-relative href (not a bare-name dead link)', () => {
+  withTranscludeFixtures({ '/root/notes/foo.md': '# Foo' }, () => {
+    __setWikiStateForTest({ config: { embedNotes: false } });
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/notes/foo.md');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+    assert.doesNotMatch(html, /href="foo"/);
+  });
+});
+
+test('oversized resolvable ![[name]] keeps a document-relative href', () => {
+  const big = 'x'.repeat(300000);
+  withTranscludeFixtures({ '/root/notes/foo.md': big }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].meta.resolvedPath, '/root/notes/foo.md');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, RENDER_ENV);
+    assert.match(html, /href="\.\.\/notes\/foo\.md"/);
+  });
+});
+
+// #14: a note that wiki-links to itself emits just the fragment, so the click
+// scrolls in place instead of reloading the document.
+test('mps_wikilink self-link (resolvedPath === docPath) emits a bare fragment href', () => {
+  withIndex([{ absPath: '/root/docs/current.md' }], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[current#Section A]]');
+    const env = { currentDocument: { fsPath: '/root/docs/current.md' } };
+    const html = md.renderer.rules.mps_wikilink(tokens, 0, {}, env);
+    assert.match(html, /href="#section-a"/);
+    assert.doesNotMatch(html, /current\.md/);
+  });
+});
+
 // ---- Summary ----------------------------------------------------------------
 
 console.log(`\n${passed} pass, ${failed} fail`);

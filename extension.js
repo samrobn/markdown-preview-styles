@@ -210,6 +210,70 @@ function fragmentToAnchor(fragment) {
   return '#' + slug;
 }
 
+// Percent-encode each path segment, preserving the `/` separators. Used in
+// place of encodeURI for hrefs because encodeURI leaves `#`, `?`, and `&`
+// unescaped - a resolved target named e.g. `report?draft.md` would otherwise
+// emit an href the click handler truncates at the `?`. encodeURIComponent
+// escapes all three, and splitting on `/` keeps the path structure intact.
+function encodePathSegments(p) {
+  return String(p).split('/').map(encodeURIComponent).join('/');
+}
+
+// Pull the previewed document's on-disk path from the render env. VS Code
+// populates env with `{ currentDocument, containingImages, slugifier,
+// resourceProvider }` for the markdown preview.
+//
+// currentDocument is a vscode.Uri, NOT a TextDocument - verified against the
+// 1.122 bundle, where MarkdownEngine.render builds `currentDocument: typeof e
+// == "string" ? void 0 : e.uri`. A Uri exposes `.fsPath` directly and has NO
+// `.uri` property. The `cd.uri.fsPath` arm is a fallback for the TextDocument
+// shape (older/future builds).
+//
+// currentDocument is undefined on the incremental render path: when you type
+// into a preview-to-the-side, VS Code re-renders with the spliced document
+// TEXT (a string), and the string branch sets `currentDocument: void 0`. So
+// relying on currentDocument alone re-introduces the vscode://file fallback
+// after every keystroke. env.resourceProvider is the MarkdownPreview itself
+// (passed identically on both render paths) and exposes `.resource` (the
+// previewed document's Uri) - so it survives the incremental path.
+function docPathFromEnv(env) {
+  const cd = env && env.currentDocument;
+  const rp = env && env.resourceProvider;
+  return (cd && cd.fsPath) ||
+         (cd && cd.uri && cd.uri.fsPath) ||
+         (rp && rp.resource && rp.resource.fsPath) ||
+         (env && env.resource && env.resource.fsPath) ||
+         null;
+}
+
+// Build the href for a wikilink whose target RESOLVED to an absolute disk path.
+// Three shapes:
+//   1. docPath known → a path relative from the previewed document to the
+//      target. VS Code's click handler sees a schemeless string, posts an
+//      `openLink` message, and the extension host resolves it relative to the
+//      preview resource - in-preview navigation, no OS prompt, preview mode.
+//      This is the path built-in `[text](relative.md)` links take.
+//   2. docPath unknown → `vscode://file/...` URI. The `vscode:` scheme is in
+//      the click-handler allowlist, so the OS routes it back to VS Code. Costs
+//      one OS prompt and opens the raw editor, but works across any path.
+//   3. target IS the previewed document (self-link) → just the fragment, so
+//      the click scrolls in place instead of reloading the file.
+// Bare-absolute and `file://` hrefs were both tried and are wrong: VS Code
+// concatenates a bare-absolute onto the preview dir (ENOENT on the doubled
+// path), and `file://` is dropped by the click handler's scheme tests.
+// resolvedPath is sourced from vscode.workspace.findFiles - not user input -
+// so it doesn't need safeHref screening.
+function buildResolvedHref(resolvedPath, fragment, docPath) {
+  const anchor = fragmentToAnchor(fragment);
+  if (docPath) {
+    if (resolvedPath === docPath) return anchor; // self-link → bare fragment
+    let rel = path.relative(path.dirname(docPath), resolvedPath);
+    rel = rel.split(path.sep).join('/'); // Windows backslashes → URL slashes
+    return encodePathSegments(rel) + anchor;
+  }
+  return 'vscode://file' + encodePathSegments(resolvedPath) + anchor;
+}
+
 // Expand `~` and `~/...` in a path string. No-op on absolute paths.
 function expandTilde(p) {
   if (typeof p !== 'string' || !p.startsWith('~')) return p;
@@ -713,7 +777,16 @@ function activate(context) {
             if (!transcluded) {
               const tok = state.push('mps_wikilink', '', 0);
               tok.content = path;
-              tok.meta = { embed: true };
+              // Resolve here too, so a target that simply wasn't transcluded
+              // (embedNotes off, or over the size cap) still gets a working
+              // href instead of degrading to a dead bare-name link. Mirrors
+              // the mps_wikilink parse rule's resolution.
+              const parsed = parseWikilinkTarget(path);
+              tok.meta = { embed: true, parsed };
+              if (wikiConfig.enabled) {
+                const resolved = resolveWikilinkTarget(parsed.name);
+                if (resolved) tok.meta.resolvedPath = resolved;
+              }
             }
           }
         }
@@ -771,22 +844,32 @@ function activate(context) {
         const meta = tok.meta || {};
         const e = env || {};
         const depth = e.mpsEmbedDepth || 0;
-        // Cycle-cap: at depth 2, refuse to expand. Render as a wiki-link
-        // styled with mps-embed-cycle so it's visually distinct from a
-        // fresh embed.
-        if (depth >= 2) {
-          return `<a class="mps-wiki-link mps-embed-fallback mps-embed-cycle" href="${escapeHtml(meta.resolvedPath || '')}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
-        }
+        // Every degrade path (cycle cap, fragment-miss, read error) renders the
+        // same fallback link: a real clickable href via buildResolvedHref (NOT
+        // the bare absolute resolvedPath, which VS Code can't navigate), and
+        // display text from the parsed target so an alias / fragment in the
+        // original `![[...]]` shows cleanly rather than literally.
+        const parsedTarget = parseWikilinkTarget(meta.originalTarget || '');
+        const fallbackDisplay = parsedTarget.alias != null
+          ? parsedTarget.alias
+          : basenameWithoutExt(parsedTarget.name || meta.originalTarget || '');
+        const fallbackLink = (extraClass) => {
+          const cls = 'mps-wiki-link mps-embed-fallback' + (extraClass ? ' ' + extraClass : '');
+          const href = meta.resolvedPath
+            ? buildResolvedHref(meta.resolvedPath, meta.fragment, docPathFromEnv(e))
+            : '';
+          if (!href) return `<span class="${cls}">${escapeHtml(fallbackDisplay)}</span>`;
+          return `<a class="${cls}" href="${escapeHtml(href)}">${escapeHtml(fallbackDisplay)}</a>`;
+        };
+        // Cycle-cap: at depth 2, refuse to expand. mps-embed-cycle marks it
+        // visually distinct from a fresh embed.
+        if (depth >= 2) return fallbackLink('mps-embed-cycle');
         let body = '';
         try {
           const raw = wikiReadFile(meta.resolvedPath);
           const stripped = stripFrontmatter(raw);
           const sliced = sliceToFragment(stripped, meta.fragment);
-          if (!sliced) {
-            // Fragment not found in target. Surface as fallback - matches
-            // the broken-resolution path.
-            return `<a class="mps-wiki-link mps-embed-fallback" href="${escapeHtml(meta.resolvedPath)}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
-          }
+          if (!sliced) return fallbackLink(); // fragment not found in target
           const innerEnv = Object.assign({}, e, { mpsEmbedDepth: depth + 1 });
           if (typeof md.render === 'function') {
             body = md.render(sliced, innerEnv);
@@ -799,7 +882,7 @@ function activate(context) {
         } catch (err) {
           // Read failure (race with index, permissions). Fall back to a
           // link rather than crashing the whole preview render.
-          return `<a class="mps-wiki-link mps-embed-fallback" href="${escapeHtml(meta.resolvedPath || '')}">${escapeHtml(basenameWithoutExt(meta.originalTarget || ''))}</a>`;
+          return fallbackLink();
         }
         return `<div class="mps-embed-note" data-source="${escapeHtml(meta.resolvedPath)}"><div class="mps-embed-note-body">${body}</div></div>`;
       };
@@ -813,79 +896,27 @@ function activate(context) {
         const display = parsed.alias != null
           ? parsed.alias
           : basenameWithoutExt(parsed.name || content);
-        // Pull the previewed document's path from env at RENDER time. VS Code
-        // populates env with `{ currentDocument, containingImages, slugifier,
-        // resourceProvider }` for the markdown preview.
-        //
-        // currentDocument is a vscode.Uri, NOT a TextDocument - verified
-        // against the 1.122 bundle, where MarkdownEngine.render builds
-        // `currentDocument: typeof e == "string" ? void 0 : e.uri`. A Uri
-        // exposes `.fsPath` directly and has NO `.uri` property, so the path
-        // is at `cd.fsPath`. The older `cd.uri.fsPath` access (TextDocument
-        // shape) is kept as a fallback in case the env shape changes back.
-        //
-        // BUT currentDocument is undefined on the incremental render path:
-        // when you type into a preview-to-the-side, VS Code calls
-        // MarkdownEngine.render with the spliced document TEXT (a string), and
-        // the string branch sets `currentDocument: void 0`. So relying on
-        // currentDocument alone re-introduces the vscode://file fallback after
-        // every keystroke. env.resourceProvider is the MarkdownPreview itself
-        // (passed identically on both render paths) and exposes `.resource`
-        // (the previewed document's Uri) - so it survives the incremental path.
-        const cd = env && env.currentDocument;
-        const rp = env && env.resourceProvider;
-        const docPath = (cd && cd.fsPath) ||
-                        (cd && cd.uri && cd.uri.fsPath) ||
-                        (rp && rp.resource && rp.resource.fsPath) ||
-                        (env && env.resource && env.resource.fsPath) ||
-                        null;
-        // Build the href. Three paths:
-        //   1. Resolved + docPath known → emit a path relative from the
-        //      previewed document to the resolved target. VS Code's preview
-        //      click handler sees a schemeless string, posts an `openLink`
-        //      message, and the extension host's resolveLinkTarget interprets
-        //      it as relative-to-preview-doc. This is the path the built-in
-        //      `[text](relative.md)` links take - in-preview navigation, no
-        //      OS prompt, opens in preview mode rather than raw editor.
-        //   2. Resolved but docPath unknown → fall back to `vscode://file/...`
-        //      URI. The `vscode:` scheme is in the link-handler allowlist
-        //      (http/https/mailto/vscode/vscode-insiders), so the browser
-        //      hands off to the OS, which routes `vscode://` back to VS Code
-        //      and opens the file. Costs one OS prompt and opens in raw editor
-        //      mode rather than preview, but works across any path.
-        //   3. No index hit → fall back to safeHref-guarded raw name.
-        // Other formats tried during smoke-testing - all wrong:
-        //   - bare absolute `/abs/...` → resolveDocumentLink treats it as
-        //     relative-to-preview-dir and concatenates → ENOENT on the
-        //     doubled path.
-        //   - `file://` URI → click handler sees a scheme but it's not in
-        //     the allowlist AND it matches the no-scheme negative test, so
-        //     the click is silently dropped.
-        // Resolver output is sourced from vscode.workspace.findFiles and
-        // therefore not user-controlled, so safeHref's file:-rejection
-        // doesn't apply to paths 1 and 2 - the resolver IS the validation.
+        // docPath (previewed document's path) is read from env at RENDER time -
+        // see docPathFromEnv for why parse-time isn't reliable and why both
+        // currentDocument and resourceProvider.resource are consulted.
+        const docPath = docPathFromEnv(env);
+        // Three href shapes, in priority order:
+        //   - resolved target → buildResolvedHref (relative / vscode://file /
+        //     bare-fragment self-link); resolver output is trusted, no safeHref.
+        //   - no index hit → safeHref-guarded raw name (rejects dangerous
+        //     schemes, preserves the pre-resolution document-relative behaviour).
         let href;
         const meta = tok.meta || {};
-        if (meta.resolvedPath && docPath) {
-          // path.relative needs the FROM directory, not file. Cross-platform
-          // safe because path.relative handles separators per-platform.
-          let rel = path.relative(path.dirname(docPath), meta.resolvedPath);
-          // On Windows, path.relative uses backslashes. Normalise to forward
-          // slashes for URL form. POSIX paths already use forward slashes.
-          rel = rel.split(path.sep).join('/');
-          href = encodeURI(rel) + fragmentToAnchor(parsed.fragment);
-        } else if (meta.resolvedPath) {
-          href = 'vscode://file' + encodeURI(meta.resolvedPath) + fragmentToAnchor(parsed.fragment);
+        if (meta.resolvedPath) {
+          href = buildResolvedHref(meta.resolvedPath, parsed.fragment, docPath);
         } else {
           const rawHref = (parsed.name || content) + fragmentToAnchor(parsed.fragment);
           href = safeHref(rawHref);
         }
-        // Tokens emitted by mps_embed for non-image embeds carry meta.embed
-        // so the rendered anchor can be styled distinctly. Cycle-degraded
-        // embeds carry meta.embedCycle for a separate class.
+        // Tokens emitted by mps_embed for non-image embeds carry meta.embed so
+        // the rendered anchor can be styled distinctly.
         const classes = ['mps-wiki-link'];
         if (tok.meta && tok.meta.embed) classes.push('mps-embed-fallback');
-        if (tok.meta && tok.meta.embedCycle) classes.push('mps-embed-cycle');
         const cls = classes.join(' ');
         // Empty href falls back to the inert span - covers [[javascript:...]]
         // and similar dangerous schemes.
