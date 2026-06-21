@@ -26,7 +26,7 @@ ln -s ~/Dev/vscode-extensions/markdown-preview-styles \
       ~/.vscode/extensions/local.markdown-preview-styles-0.2.0
 ```
 
-Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`) so VS Code doesn't load both, then fully quit and relaunch VS Code (`Cmd+Q`).
+Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`) so VS Code doesn't load both. VS Code detects the changed extensions folder and prompts to reload - accepting that is enough; a full `Cmd+Q` is rarely needed.
 
 ## Related VS Code settings
 
