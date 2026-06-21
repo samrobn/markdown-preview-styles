@@ -227,6 +227,26 @@ const PAGE_ASSERTIONS = `(() => {
     results.push({ label: 'wide-content cap leaves room for the scrollbar', ok: false, reason: 'no body table to measure the cap on' });
   }
 
+  // Breakout actually happens: the widest top-level table must exceed the
+  // .markdown-body column. The cap-clearance check above catches a broken
+  // selector (maxWidth -> 'none' -> NaN -> fails) but would still pass if
+  // width:max-content were dropped - the table would then size to the
+  // column and the breakout would be silently dead. (Needs example.md to keep
+  // a table whose content is wider than the column - the Wide tables one.)
+  const bodyTables = [...document.querySelectorAll('table.code-line:not(.mps-properties-table)')];
+  const markdownBody = document.querySelector('.markdown-body');
+  if (bodyTables.length && markdownBody) {
+    const widest = bodyTables.reduce((a, b) => b.offsetWidth > a.offsetWidth ? b : a);
+    const column = markdownBody.getBoundingClientRect().width;
+    results.push({
+      label: 'wide table breaks out past the column',
+      ok: widest.offsetWidth > column,
+      tableWidth: Math.round(widest.offsetWidth), column: Math.round(column),
+    });
+  } else {
+    results.push({ label: 'wide table breaks out past the column', ok: false, reason: 'no body table or .markdown-body to measure' });
+  }
+
   return JSON.stringify(results);
 })()`;
 
@@ -273,7 +293,9 @@ function check(outPath) {
           ? `top=${r.top}, liHeight=${r.liHeight}`
           : r.clearance !== undefined
             ? `clearance=${r.clearance}px (need >=${r.need}), leftInset=${r.leftInset}, cap=${r.capPx}`
-            : (r.reason || '');
+            : r.tableWidth !== undefined
+              ? `tableWidth=${r.tableWidth} > column=${r.column}`
+              : (r.reason || '');
     console.log(`  ${status}  ${r.label}: ${detail}`);
     r.ok ? pass++ : fail++;
   }
