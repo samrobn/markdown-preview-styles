@@ -3,7 +3,7 @@
   "displayName": "Markdown Preview Styles (local)",
   "description": "Personal CSS for VS Code's built-in markdown preview, plus an Obsidian-style frontmatter Properties table.",
   "publisher": "local",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "samrobn",
   "license": "MIT",
   "repository": {

@@ -30,7 +30,9 @@ The visual harness in `test/visual/` runs real markdown-it + our plugin + VS Cod
 
 `test/visual/fixtures/notes/` holds a small set of files the harness uses to seed the workspace index via the `__setWikiStateForTest` test seam - lets the harness exercise wikilink resolution and `![[note]]` transclusion paths against real `markdown-it`. Add fixtures here when verifying new resolver/embed behaviour visually.
 
-**Known harness issue (Node 25):** `test/visual/node_modules/mdurl` ships without `build/index.cjs.js` (the file its `package.json` `main` field points to). On Node 25 this surfaces as `MODULE_NOT_FOUND` when `markdown-it` requires `mdurl`. Pre-existing, not caused by anything in this repo - reproducible on a clean `git stash` of all working changes. Workarounds: pin Node ≤ 22 for the harness, or `cd test/visual && npm install mdurl@2.0.0 --force` to grab a tarball that includes the CJS build. The live VS Code preview path is unaffected.
+**Harness `node_modules` corruption (was misdiagnosed as a Node 25 mdurl bug):** a partial/corrupt install under `test/visual/node_modules` throws `MODULE_NOT_FOUND` for files a package's `package.json` points at - seen as `mdurl` missing `build/index.cjs.js` *and* `lib/encode.mjs`, and `entities` missing its `generated/` files - when `markdown-it` loads. It is **not** Node-version-specific (a freshly-downloaded tarball of the same package is complete), and `npm install mdurl@2.0.0 --force` does **not** fix it. Fix: `rm -rf test/visual/node_modules && npm install`. The live VS Code preview path is unaffected.
+
+**`render.js check` transport:** the installed `agent-browser` no longer decodes `eval --base64`, so `check` passes the assertion script as a single `execFileSync` argv and polls until preview.js has set `--mps-before-left` before measuring (otherwise the gutter-alignment samples race the webview's `requestAnimationFrame` and flake). Don't revert either to `--base64` or to a bare open-then-eval.
 
 ## Reload after a change
 
@@ -56,6 +58,14 @@ It calls `md.parse(src) + md.renderer.render(tokens, ...)` directly. Overriding 
 - `md.block.ruler.before(...)` - participate in block parsing
 - `md.inline.ruler.before('link', name, fn)` - inline rules; `[[wiki-link]]` must be `before('link')` so it's consumed before markdown-it tries to read it as a reference link
 - `md.renderer.rules[type] = fn` - per-token-type rendering
+
+### VS Code wraps preview content in `.markdown-body`, not bare `body`
+
+VS Code's `markdown-language-features` emits the body as `<div class="markdown-body" dir="auto">${renderedHtml}</div>` (verified in the installed bundle). So top-level blocks - paragraphs, `<pre>`, `<table>`, headings - are children of that **wrapper**, not direct children of `body`. A `body > pre` / `body > table` selector matches **nothing** in the live preview. Target top-level blocks via `.markdown-body > X` (the wide-content breakout rule does this) or a descendant selector that excludes the nesting containers. Don't add a `body > X` arm "for safety" - nothing renders content under bare `body`, so it's dead.
+
+The visual harness historically rendered content directly under `body`, omitting this wrapper - so `body >` selectors passed in the harness yet silently did nothing live (a false positive that only eyeballing the real preview catches; the webview exposes no CDP). `render.js` now wraps content in `.markdown-body` to match VS Code. Keep it that way: any selector that distinguishes top-level from nested blocks depends on the wrapper being present in both places.
+
+**Harness fidelity, twice-bitten - mirror VS Code's CSS chrome too, and know what the harness can't show.** Beyond the wrapper, the harness must reproduce VS Code's `markdown.css` chrome that affects geometry: `html, body { padding: 0 26px }` (plus the never-reset 8px default body margin) put the content's left edge ~104px in, not at the gutter's 5em. A viewport-edge cap (`max-width: calc(100vw - Nrem)`) must clear that whole inset **and** the vertical scrollbar - `100vw` includes the scrollbar but the usable width doesn't. The harness omitted that padding and so under-stated the inset; worse, **headless Chromium renders 0-width (overlay) scrollbars**, so the harness can never reproduce scrollbar-induced horizontal overflow directly. Test the invariant instead (left inset + resolved cap + scrollbar allowance ≤ `innerWidth`), and confirm the actual scroll live. When a layout bug "can't be reproduced in the harness", suspect a chrome/scrollbar the harness doesn't model before doubting the report.
 
 ### The hover indicator lives on `::before`, not the element
 

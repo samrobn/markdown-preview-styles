@@ -200,11 +200,23 @@ const x = 1;
 ```
 ````
 
-Long lines overflow horizontally rather than wrapping, so wide source stays legible:
+Long lines grow the block rightward into the free space beside the 880px text column, up to the window edge - then scroll. Wide source stays on one line as far as the window allows, instead of being squashed into the prose column:
 
 ```js
 const veryLongVariableName = someFunctionThatTakesMany(argumentOne, argumentTwo, argumentThree, argumentFour, argumentFive, argumentSix);
 ```
+
+## Wide tables
+
+A table with more columns than the 880px column can hold grows rightward into the free space rather than squashing every cell, capping at the window edge (where cells start to wrap). Narrow the window to watch it reflow. A table that fits the column - like the Properties one above - is left untouched.
+
+| Endpoint         | Method | Auth   | Rate limit | Request body        | Success | Notes                                                                        |
+|------------------|--------|--------|------------|---------------------|---------|------------------------------------------------------------------------------|
+| `/api/users`     | GET    | Bearer | 100/min    | -                   | 200     | Paginated; pass `?page=` and `?limit=` query params. Defaults to 20 per page. |
+| `/api/users/:id` | GET    | Bearer | 100/min    | -                   | 200     | Returns 404 when the id is unknown, or 410 if the user was permanently deleted. |
+| `/api/users`     | POST   | Bearer | 20/min     | `{name, email}`     | 201     | Email must be globally unique; responds 409 Conflict on collision.            |
+| `/api/users/:id` | PATCH  | Bearer | 20/min     | `{name?, email?}`   | 200     | Partial update; omitted fields are left exactly as-is, no-op bodies still 200. |
+| `/api/sessions`  | POST   | None   | 5/min      | `{email, password}` | 200     | Sets the httpOnly session cookie on success; 401 with a generic bad-credentials message. |
 
 ## Callouts
 

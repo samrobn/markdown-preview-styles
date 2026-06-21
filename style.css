@@ -18,6 +18,43 @@ body {
   box-sizing: border-box;
 }
 
+/* Wide code blocks and tables break out of the 880px text column.
+   The column keeps prose at a comfortable measure, but a code block with
+   long lines or a table with many columns would rather use the empty space
+   to the right than squash or scroll inside 880px. These size to their own
+   content (max-content ignores the parent's width) and grow rightward only,
+   so the left edge - and the line-number gutter anchored to it - stays put.
+   The cap stops them crossing the window's right edge once it engages. The
+   block's left edge is the body content-left, which in the live preview is
+   ~104px in: VS Code's html padding (26px) + the default body margin (8px,
+   never reset) + our body padding-left (5rem gutter). 100vw includes the
+   vertical scrollbar but the usable width does not, so the reserve must also
+   clear it (~17px). 10rem (140px) covers all of that with breathing room; the
+   earlier 8rem only cleared the gutter, so a capped block poked ~7px past the
+   viewport (a small horizontal scroll).
+
+   Scoped to direct children of `.markdown-body` - the wrapper VS Code renders
+   the body HTML into (`<div class="markdown-body" dir="auto">`); the visual
+   harness mirrors that wrapper. A pre or table nested in a callout, list,
+   blockquote, note-embed, or table cell isn't a direct child of it, so the
+   child combinator leaves it inside its container. Content narrower than the
+   column is untouched - max-content then resolves to the same width an
+   auto-sized pre/table already renders. The properties table lives inside an
+   <aside>, so the combinator skips it regardless.
+
+   No overflow rule: VS Code's own markdown.css already scrolls over-cap code
+   (`pre:not(.hljs)` and `pre.hljs code > div` both get `overflow: auto`), so
+   adding `overflow-x` here only duplicates that and needlessly turns the pre
+   into a scroll container. Capping the width is enough; VS Code handles the
+   scroll. (Aside: live code blocks render no gutter line-number at all - the
+   number lands on the <code>, whose ::before VS Code's pre/fence rendering
+   hides; a pre-existing quirk, unrelated to width.) */
+.markdown-body > pre,
+.markdown-body > table:not(.mps-properties-table) {
+  width: max-content;
+  max-width: calc(100vw - 10rem);
+}
+
 /* VS Code's markdown.css only applies `position: relative` to `.code-line`
    when `body.showEditorSelection` is set, which in turn only happens when
    `markdown.preview.markEditorSelection: true`. As of VS Code 1.120 that

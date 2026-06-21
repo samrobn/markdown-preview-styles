@@ -22,7 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MarkdownIt = require('markdown-it');
@@ -78,8 +78,16 @@ function render(srcPath) {
   const body = md.render(src);
   const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
   const previewJs = fs.readFileSync(path.join(ROOT, 'preview.js'), 'utf8');
-  // Approximate VS Code preview defaults: dark background, sensible body
-  // padding so absolute-positioned gutter ::before's aren't clipped at x=0.
+  // Approximate VS Code preview defaults: dark background. style.css's own
+  // body `padding-left: 5em` (applied above) gives the gutter ::before its
+  // space, exactly as in the live preview - the harness adds no extra inset,
+  // so the wide-content cap (`100vw - 8rem`) reserves the same room it does
+  // live. The rendered HTML is wrapped in <div class="markdown-body"> as
+  // VS Code does (verified in the markdown-language-features bundle) - top-
+  // level blocks are children of that wrapper, NOT body, so selectors like
+  // `.markdown-body > pre` are exercised faithfully. Omitting it once gave a
+  // false positive on the wide-content breakout, which only matches the
+  // wrapper's children.
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 ${css}
@@ -88,14 +96,29 @@ ${css}
    discrepancy between hard-coded pixel offsets (preview.js GUTTER_TARGET)
    and rem/em fallbacks in style.css. */
 html { font-size: 14px; }
-body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: #ccc; margin-left: 6em; }
+body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: #ccc; }
+/* Mirror VS Code's markdown.css chrome (html, body each get 0 26px padding) so
+   the harness reproduces the live left inset, which the wide-content cap must
+   clear: html padding-left (26px) + the default body margin (8px, never reset)
+   + our body padding-left (5em gutter) = ~104px. Our style.css overrides body's
+   left padding to 5em, so only mirror html's full padding and body's right. */
+html { padding: 0 26px; }
+body { padding-right: 26px; }
 ul, ol { padding-inline-start: 30px; }
+/* Mirror VS Code's markdown.css, which our style.css deliberately leaves to
+   it: plain code blocks scroll over-cap content. (Highlighted blocks scroll on
+   an inner code>div the harness doesn't build, so plain is the case we mirror.)
+   Without this the harness wouldn't represent the live over-cap scroll, now
+   that style.css adds no overflow of its own. */
+pre:not(.hljs) { overflow: auto; }
 /* Match VS Code's preview: every .code-line is position: relative so its
    ::before is contained within its own box, not the document body. */
 .code-line { position: relative; }
 </style></head>
 <body class="vscode-dark">
+<div class="markdown-body" dir="auto">
 ${body}
+</div>
 <script>${previewJs}</script>
 </body></html>`;
   const out = path.join(__dirname, 'out.html');
@@ -151,13 +174,16 @@ const PAGE_ASSERTIONS = `(() => {
     actual: ulEl ? getComputedStyle(ulEl, '::before').display : 'no ul.code-line',
   });
 
-  // blockquote ::before suppression (callout container shares its line with
-  // its first <p> child, same duplicate-number issue as ul/ol).
-  const bqEl = document.querySelector('blockquote.code-line');
+  // Callout-container ::before suppression. Callouts are rewritten from
+  // blockquotes to div.mps-callout, and the container shares its source line
+  // with its title row - the same duplicate-number issue as ul/ol, suppressed
+  // by CSS. example.md has no plain blockquotes left (all are callouts), so we
+  // assert against the container that actually carries the duplicate number.
+  const calloutEl = document.querySelector('.mps-callout.code-line');
   results.push({
-    label: 'blockquote ::before display:none',
-    ok: bqEl && getComputedStyle(bqEl, '::before').display === 'none',
-    actual: bqEl ? getComputedStyle(bqEl, '::before').display : 'no blockquote.code-line',
+    label: 'callout container ::before display:none',
+    ok: calloutEl && getComputedStyle(calloutEl, '::before').display === 'none',
+    actual: calloutEl ? getComputedStyle(calloutEl, '::before').display : 'no .mps-callout.code-line',
   });
 
   // Parent <li> with nested .code-line should NOT have ::before vertically
@@ -179,15 +205,58 @@ const PAGE_ASSERTIONS = `(() => {
     results.push({ label: 'parent-li ::before anchored to top', ok: false, reason: 'no parent li.code-line with nested .code-line found' });
   }
 
+  // Wide-content cap clears the scrollbar. A maximally-capped breakout block
+  // (left edge + the resolved max-width) must leave room for the live vertical
+  // scrollbar; 100vw includes the scrollbar but the usable width does not, so
+  // an under-sized reserve lets a capped block poke past the viewport edge - a
+  // small horizontal scroll. Needs the harness to carry VS Code's html/body
+  // padding (above) for the left inset to match the live ~104px.
+  const SCROLLBAR_ALLOWANCE = 15;
+  const widthTable = document.querySelector('table.code-line:not(.mps-properties-table)');
+  if (widthTable) {
+    const leftInset = widthTable.getBoundingClientRect().left;
+    const capPx = parseFloat(getComputedStyle(widthTable).maxWidth);
+    const cappedRightEdge = leftInset + capPx;
+    const clearance = window.innerWidth - cappedRightEdge;
+    results.push({
+      label: 'wide-content cap leaves room for the scrollbar',
+      ok: clearance >= SCROLLBAR_ALLOWANCE,
+      clearance: Math.round(clearance), need: SCROLLBAR_ALLOWANCE, leftInset: Math.round(leftInset), capPx: Math.round(capPx),
+    });
+  } else {
+    results.push({ label: 'wide-content cap leaves room for the scrollbar', ok: false, reason: 'no body table to measure the cap on' });
+  }
+
   return JSON.stringify(results);
 })()`;
 
+// Block synchronously for `ms` without spawning a subprocess (no execSync('sleep')).
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 function check(outPath) {
   const fileUrl = 'file://' + outPath;
-  execSync(`agent-browser open ${JSON.stringify(fileUrl)}`, { stdio: 'inherit' });
-  // Base64 transport avoids shell-escaping issues with multi-line scripts.
-  const b64 = Buffer.from(PAGE_ASSERTIONS).toString('base64');
-  const raw = execSync(`agent-browser eval --base64 ${b64}`).toString();
+  execFileSync('agent-browser', ['open', fileUrl], { stdio: 'inherit' });
+  // preview.js sets --mps-before-left in the webview asynchronously (after
+  // layout, on requestAnimationFrame). Measuring before it lands leaves the
+  // gutter ::before on its static per-depth fallback, so the samples scatter
+  // and the "same x" assertion flakes. Poll a deeply-nested .code-line until
+  // the property is set before asserting.
+  const readyProbe = `(() => { const el = document.querySelector('li.code-line[data-mps-list-depth="3"]'); return !!(el && el.style.getPropertyValue('--mps-before-left')); })()`;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    // A transient non-zero eval exit (e.g. the page mid-reflow) shouldn't crash
+    // the run - treat it as "not ready yet" and keep polling until the deadline.
+    try {
+      if (execFileSync('agent-browser', ['eval', readyProbe]).toString().includes('true')) break;
+    } catch (_) { /* keep polling */ }
+    sleepSync(150);
+  }
+  // Pass the script as a single argv (execFileSync = no shell), so multi-line
+  // quoting is a non-issue and we don't depend on `eval --base64`, which newer
+  // agent-browser builds no longer decode. agent-browser prints the string
+  // return value JSON-encoded, so the inner JSON.parse unwraps that quoting and
+  // the outer one parses our results array.
+  const raw = execFileSync('agent-browser', ['eval', PAGE_ASSERTIONS]).toString();
   const results = JSON.parse(JSON.parse(raw));
   let pass = 0, fail = 0;
   console.log('\nVisual assertions:');
@@ -202,7 +271,9 @@ function check(outPath) {
         ? `actual=${r.actual}`
         : r.top !== undefined
           ? `top=${r.top}, liHeight=${r.liHeight}`
-          : (r.reason || '');
+          : r.clearance !== undefined
+            ? `clearance=${r.clearance}px (need >=${r.need}), leftInset=${r.leftInset}, cap=${r.capPx}`
+            : (r.reason || '');
     console.log(`  ${status}  ${r.label}: ${detail}`);
     r.ok ? pass++ : fail++;
   }

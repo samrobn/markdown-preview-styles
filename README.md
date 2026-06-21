@@ -16,14 +16,14 @@ Two things it does:
 The extension is symlinked into VS Code's extensions directory. The folder name must match `<publisher>.<name>-<version>` from `package.json`:
 
 ```
-~/.vscode/extensions/local.markdown-preview-styles-0.1.0  →  ~/Dev/vscode-extensions/markdown-preview-styles
+~/.vscode/extensions/local.markdown-preview-styles-0.2.0  →  ~/Dev/vscode-extensions/markdown-preview-styles
 ```
 
 If the symlink is missing (new machine, accidental deletion, or after a version bump):
 
 ```bash
 ln -s ~/Dev/vscode-extensions/markdown-preview-styles \
-      ~/.vscode/extensions/local.markdown-preview-styles-0.1.0
+      ~/.vscode/extensions/local.markdown-preview-styles-0.2.0
 ```
 
 Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`) so VS Code doesn't load both, then fully quit and relaunch VS Code (`Cmd+Q`).
@@ -47,6 +47,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 ## Current rules
 
 - Caps preview width at 880px and left-aligns content (no centring).
+- Lets wide **code blocks** and **tables** break out of that column into the free space to their right - sizing to their content, capped at the window edge - so long code lines and many-column tables aren't squashed to the prose measure. Content that already fits, and code/tables nested in callouts or lists, are untouched.
 - Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
 - Replaces VS Code's source-line hover indicator with permanent 1-indexed line numbers in a 4em left gutter; numbers also appear next to blank source lines.
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
