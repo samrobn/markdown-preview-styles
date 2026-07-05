@@ -104,6 +104,15 @@ body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: #ccc;
    left padding to 5em, so only mirror html's full padding and body's right. */
 html { padding: 0 26px; }
 body { padding-right: 26px; }
+/* Mirror VS Code's markdown.css body line-height AND the real form of the
+   var: the preview emits --markdown-line-height as a UNITLESS multiplier
+   (dist/extension.js: \`--markdown-line-height: \${e.lineHeight}\`, setting
+   default 1.6), never a px length. Leaving the var unset here once let an
+   invalid length-calc in style.css pass on the 22px fallback while being
+   dropped live - set it unitless so the harness exercises what VS Code
+   actually serves. */
+html { --markdown-line-height: 1.6; }
+body { line-height: var(--markdown-line-height, 22px); }
 ul, ol { padding-inline-start: 30px; }
 /* Mirror VS Code's markdown.css, which our style.css deliberately leaves to
    it: plain code blocks scroll over-cap content. (Highlighted blocks scroll on
@@ -247,6 +256,41 @@ const PAGE_ASSERTIONS = `(() => {
     });
   } else {
     results.push({ label: 'indented code block (pre.code-line)', ok: false, reason: 'no pre.code-line[data-mps-line] with offsetParent' });
+  }
+
+  // Embed-wrapping paragraph number alignment. A block embed alone on its
+  // source line is parser-split (a div can't nest in a p) into an EMPTY
+  // p.code-line followed by the .mps-embed-note box as a sibling. The
+  // zero-height paragraph still carries the line number; unfixed, its
+  // centred ::before sits at the split point, crowding the preceding
+  // blank-line number. It should sit on the box's first text row.
+  const embedP = [...document.querySelectorAll('p.code-line')].find(p =>
+    !p.textContent.trim() && p.nextElementSibling &&
+    p.nextElementSibling.classList.contains('mps-embed-note'));
+  if (embedP) {
+    const beforeEmbed = getComputedStyle(embedP, '::before');
+    const boxRect = embedP.nextElementSibling.getBoundingClientRect();
+    // Measure the box's first text row directly (Range) - no line-height
+    // arithmetic, which computes as 'normal' here.
+    const firstText = document.createTreeWalker(embedP.nextElementSibling, NodeFilter.SHOW_TEXT).nextNode();
+    const range = document.createRange();
+    range.selectNodeContents(firstText);
+    const rowRect = range.getClientRects()[0];
+    const firstLineCentre = rowRect.top + rowRect.height / 2;
+    // The pseudo's own box can't be rect-measured; reconstruct its centre
+    // from top + half its line box, folding in any translateY.
+    const translateY = beforeEmbed.transform.startsWith('matrix')
+      ? parseFloat(beforeEmbed.transform.split(',')[5]) : 0;
+    const numCentre = embedP.getBoundingClientRect().top + parseFloat(beforeEmbed.top)
+      + translateY + parseFloat(beforeEmbed.lineHeight) / 2;
+    results.push({
+      label: 'embed-paragraph number sits on the box first text row',
+      ok: Math.abs(numCentre - firstLineCentre) < 3,
+      top: Math.round((numCentre - firstLineCentre) * 100) / 100,
+      liHeight: Math.round(boxRect.height),
+    });
+  } else {
+    results.push({ label: 'embed-paragraph number sits on the box first text row', ok: false, reason: 'no empty p.code-line + .mps-embed-note pair found' });
   }
 
   // ul/ol ::before suppression
