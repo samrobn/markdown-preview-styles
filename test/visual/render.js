@@ -166,6 +166,89 @@ const PAGE_ASSERTIONS = `(() => {
     xs,
   });
 
+  // Code-block gutter number. The <code>'s own ::before is clipped by the
+  // pre's scroll box, so preview.js mirrors the source-map line onto the
+  // <pre> (class mps-pre-line + data-mps-line) and CSS renders the number
+  // there: one number per block, matching the code's line, anchored to the
+  // top edge. The clipped inner number is suppressed outright so nothing
+  // double-renders in overflow-visible contexts (live pre.hljs).
+  //
+  // CRITICAL: the pre must stay position: static. A positioned pre becomes
+  // its own ::before's containing block, and its overflow: auto scrollport
+  // then clips the number exactly like the inner one - computed styles look
+  // right while nothing paints (screenshot-verified false green). Static
+  // keeps the containing block (.markdown-body / an ancestor .code-line)
+  // outside the scroller, so the number escapes the clip. The ::before's
+  // left/top are therefore relative to that ancestor, not the pre - the
+  // gutter-x below is computed against the offsetParent.
+  const preEl = document.querySelector('.markdown-body > pre.mps-pre-line');
+  const preInner = preEl && preEl.querySelector('.code-line[data-mps-line]');
+  results.push({
+    label: 'code block pre is static (a positioned pre clips its own number)',
+    ok: !!(preEl && getComputedStyle(preEl).position === 'static'),
+    actual: preEl ? getComputedStyle(preEl).position : 'no pre.mps-pre-line',
+  });
+  if (preEl && preEl.offsetParent) {
+    const before = getComputedStyle(preEl, '::before');
+    const cbRect = preEl.offsetParent.getBoundingClientRect();
+    const bodyRect = document.body.getBoundingClientRect();
+    const preRect = preEl.getBoundingClientRect();
+    const beforeX = (cbRect.left - bodyRect.left) + parseFloat(before.left);
+    results.push({
+      label: 'code block (pre)',
+      ok: beforeX >= -1 && beforeX < gutterMax,
+      beforeX, gutterMax, content: before.content,
+    });
+    const beforeYAbs = cbRect.top + parseFloat(before.top);
+    results.push({
+      label: 'code block number anchored to the top edge',
+      ok: Math.abs(beforeYAbs - preRect.top) < 8,
+      top: Math.round((beforeYAbs - preRect.top) * 100) / 100, liHeight: preRect.height,
+    });
+  } else {
+    results.push({ label: 'code block (pre)', ok: false, reason: 'no pre.mps-pre-line with offsetParent' });
+    results.push({ label: 'code block number anchored to the top edge', ok: false, reason: 'no pre.mps-pre-line with offsetParent' });
+  }
+  // getComputedStyle resolves attr() - content comes back as the quoted
+  // rendered string (e.g. "162"), so compare against the attribute value.
+  const preContent = preEl ? getComputedStyle(preEl, '::before').content.replace(/^"|"$/g, '') : null;
+  results.push({
+    label: 'code block pre mirrors the fence line number',
+    ok: !!(preEl && preInner &&
+           preEl.getAttribute('data-mps-line') === preInner.getAttribute('data-mps-line') &&
+           preContent === preEl.getAttribute('data-mps-line')),
+    actual: preEl
+      ? 'pre=' + preEl.getAttribute('data-mps-line') + ' inner=' + (preInner && preInner.getAttribute('data-mps-line')) + ' content=' + preContent
+      : 'no pre.mps-pre-line',
+  });
+  results.push({
+    label: 'inner code-line number suppressed inside pre',
+    ok: !!(preInner && getComputedStyle(preInner, '::before').display === 'none'),
+    actual: preInner ? getComputedStyle(preInner, '::before').display : 'no inner code-line',
+  });
+
+  // Indented code blocks are the OTHER pre shape: markdown-it's code_block
+  // renderer puts the source-map attrs on the <pre> itself (fence puts them
+  // on the inner <code>). That pre carries .code-line, so it must still be
+  // static (our .code-line positioning rule excludes pres) and mirrored.
+  const selfPre = document.querySelector('pre.code-line[data-mps-line]');
+  if (selfPre && selfPre.offsetParent) {
+    const beforeSelf = getComputedStyle(selfPre, '::before');
+    const cbRectSelf = selfPre.offsetParent.getBoundingClientRect();
+    const bodyRectSelf = document.body.getBoundingClientRect();
+    const beforeXSelf = (cbRectSelf.left - bodyRectSelf.left) + parseFloat(beforeSelf.left);
+    results.push({
+      label: 'indented code block (pre.code-line)',
+      ok: getComputedStyle(selfPre).position === 'static' &&
+          selfPre.classList.contains('mps-pre-line') &&
+          beforeXSelf >= -1 && beforeXSelf < gutterMax,
+      beforeX: beforeXSelf, gutterMax,
+      content: beforeSelf.content + ' pos=' + getComputedStyle(selfPre).position + ' mirrored=' + selfPre.classList.contains('mps-pre-line'),
+    });
+  } else {
+    results.push({ label: 'indented code block (pre.code-line)', ok: false, reason: 'no pre.code-line[data-mps-line] with offsetParent' });
+  }
+
   // ul/ol ::before suppression
   const ulEl = document.querySelector('ul.code-line');
   results.push({
@@ -261,7 +344,21 @@ function check(outPath) {
   // gutter ::before on its static per-depth fallback, so the samples scatter
   // and the "same x" assertion flakes. Poll a deeply-nested .code-line until
   // the property is set before asserting.
-  const readyProbe = `(() => { const el = document.querySelector('li.code-line[data-mps-list-depth="3"]'); return !!(el && el.style.getPropertyValue('--mps-before-left')); })()`;
+  // Ready = the first align pass has run AND the measurement is stable: the
+  // pre top var must match a fresh geometry read, since early passes measure
+  // mid-settle (fonts loading, broken-image placeholders swapping in) and
+  // the observer only converges it on the following frames.
+  const readyProbe = `(() => {
+    const li = document.querySelector('li.code-line[data-mps-list-depth="3"]');
+    if (!li || !li.style.getPropertyValue('--mps-before-left')) return false;
+    const pre = document.querySelector('.markdown-body > pre.mps-pre-line');
+    if (!pre) return true; // no code block to wait for
+    const cb = pre.offsetParent;
+    if (!cb) return false;
+    const measured = parseFloat(pre.style.getPropertyValue('--mps-pre-top'));
+    const actual = pre.getBoundingClientRect().top - cb.getBoundingClientRect().top;
+    return Math.abs(measured - actual) < 1;
+  })()`;
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     // A transient non-zero eval exit (e.g. the page mid-reflow) shouldn't crash

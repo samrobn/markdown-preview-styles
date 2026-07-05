@@ -46,9 +46,8 @@ body {
    (`pre:not(.hljs)` and `pre.hljs code > div` both get `overflow: auto`), so
    adding `overflow-x` here only duplicates that and needlessly turns the pre
    into a scroll container. Capping the width is enough; VS Code handles the
-   scroll. (Aside: live code blocks render no gutter line-number at all - the
-   number lands on the <code>, whose ::before VS Code's pre/fence rendering
-   hides; a pre-existing quirk, unrelated to width.) */
+   scroll. (The gutter number that overflow would clip off the inner <code>
+   is mirrored onto the <pre> itself - see the .mps-pre-line rules below.) */
 .markdown-body > pre,
 .markdown-body > table:not(.mps-properties-table) {
   width: max-content;
@@ -62,9 +61,19 @@ body {
    override no longer get the positioned context our line-number `::before`
    relies on. Without it the absolute-positioned numbers anchor to body
    and stack off-screen. Force the positioning here unconditionally - we
-   need it for our gutter regardless of the setting. */
-.code-line {
+   need it for our gutter regardless of the setting.
+
+   EXCEPT on <pre>: indented code blocks carry .code-line on the pre itself
+   (markdown-it's code_block renderer), and a positioned pre's overflow:auto
+   scrollport clips its own gutter ::before - see the .mps-pre-line comment
+   further down. The !important static arm also beats VS Code's own
+   `body.showEditorSelection .code-line { position: relative }` when the
+   user has markEditorSelection on. */
+.code-line:not(pre) {
   position: relative;
+}
+body pre.code-line {
+  position: static !important;
 }
 
 /* Restore the active-line indicator (`markdown.preview.markEditorSelection`)
@@ -181,7 +190,8 @@ body .hljs-regexp {
   color: #D16969;
 }
 
-body .code-line:not(table .code-line)::before {
+body .code-line:not(table .code-line)::before,
+body pre.mps-pre-line::before {
   content: attr(data-mps-line) !important;
   position: absolute !important;
   /* `--mps-before-left` is set per-element by preview.js (runs in the
@@ -243,6 +253,43 @@ body .code-line[data-mps-list-depth="5"]:not(table .code-line)::before {
 body ul.code-line::before,
 body ol.code-line::before,
 body blockquote.code-line::before {
+  display: none !important;
+}
+
+/* Code blocks: the fence's source-map attrs land on the <code>, whose
+   ::before is clipped by the pre's scroll box (VS Code's markdown.css sets
+   overflow: auto on pre:not(.hljs)). preview.js mirrors the line onto the
+   <pre> as .mps-pre-line + data-mps-line, and the shared gutter rule above
+   renders the block's single number there. The inner number is suppressed
+   outright so contexts whose overflow doesn't clip (live pre.hljs scrolls
+   an inner div, not the pre) can't render a duplicate.
+
+   The pre must stay position: STATIC - do not give it a positioned context.
+   A positioned pre becomes its own ::before's containing block, and its
+   overflow: auto scrollport then clips the number exactly like the inner
+   one (computed styles look fine; nothing paints - screenshot-verified).
+   Static, the ::before's containing block is the nearest positioned
+   ancestor OUTSIDE the scroller - .markdown-body (made positioned here)
+   for top-level blocks, or an ancestor .code-line (li, callout) - which
+   abspos boxes escape overflow through. preview.js therefore measures the
+   number's left AND top against the pre's offsetParent and hands both over
+   as vars; the static -5em fallback is useless here, so no number renders
+   until the script runs (matching the pre-existing live behaviour). */
+.markdown-body {
+  position: relative;
+}
+body pre.mps-pre-line::before,
+body pre.mps-pre-line.code-line::before {
+  top: calc(var(--mps-pre-top, 0px) + 0.3em) !important;
+  transform: none !important;
+}
+body pre .code-line::before {
+  display: none !important;
+}
+/* An attrs-on-pre code block (indented shape) that preview.js hasn't
+   normalised yet would render its number at the -5em fallback relative to
+   a distant containing block - a stray floater. No number until measured. */
+body pre.code-line:not(.mps-pre-line)::before {
   display: none !important;
 }
 

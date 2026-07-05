@@ -22,12 +22,46 @@
   // for top-level paragraphs.
   const GUTTER_TARGET = -64;
 
+  // Code blocks: the fence's source-map attrs land on an element INSIDE the
+  // <pre> (the <code> in plain markdown-it), whose gutter ::before sits 64px
+  // left of it - within the pre's box, which VS Code's markdown.css scrolls
+  // (overflow: auto), clipping the number. Mirror the line onto the <pre>
+  // itself so CSS can render the block's single number outside any scroll
+  // box. Idempotent writes (skip when unchanged) keep the attribute-watching
+  // MutationObserver from looping, same pattern as align().
+  function mirrorPreLineNumbers() {
+    for (const pre of document.querySelectorAll('pre')) {
+      // Two shapes: fences carry the source-map attrs on the inner <code>
+      // (first mapped descendant wins - a fence has exactly one); indented
+      // code blocks carry them on the <pre> itself. Table-nested pres stay
+      // unnumbered like all other table content, and a pre whose inner
+      // attrs the in-place DOM diff wiped drops its stale mirror rather
+      // than showing a number that no longer maps to a source line.
+      const inner = pre.querySelector('.code-line[data-mps-line]');
+      const ownLine = pre.classList.contains('code-line') && pre.getAttribute('data-mps-line');
+      if ((!inner && !ownLine) || pre.closest('table')) {
+        if (pre.classList.contains('mps-pre-line')) {
+          pre.classList.remove('mps-pre-line');
+          // data-mps-line on a .code-line pre is the pipeline's, not our
+          // mirror's - leave it.
+          if (!pre.classList.contains('code-line')) pre.removeAttribute('data-mps-line');
+        }
+        continue;
+      }
+      const line = inner ? inner.getAttribute('data-mps-line') : ownLine;
+      if (pre.getAttribute('data-mps-line') !== line) pre.setAttribute('data-mps-line', line);
+      if (!pre.classList.contains('mps-pre-line')) pre.classList.add('mps-pre-line');
+    }
+  }
+
   function align() {
     const body = document.body;
     if (!body) return;
     const bodyLeft = body.getBoundingClientRect().left;
     const bodyContentLeft = bodyLeft + parseFloat(getComputedStyle(body).paddingLeft || '0');
-    const lines = document.querySelectorAll('.code-line');
+    // pre.mps-pre-line carries the mirrored code-block number (set above),
+    // so it needs the same measured offset as every .code-line.
+    const lines = document.querySelectorAll('.code-line, pre.mps-pre-line');
     for (const el of lines) {
       // Skip elements INSIDE a table (rows/cells) - line numbers there are
       // suppressed by CSS. The <table> element itself still needs its
@@ -36,6 +70,26 @@
       // VS Code's preview root is 14px → static fallback lands 8px to the
       // right of every other gutter number).
       if (el.tagName !== 'TABLE' && el.closest('table')) continue;
+      // pre.mps-pre-line is deliberately static (a positioned pre's own
+      // overflow scrollport would clip its ::before - see style.css), so
+      // its number positions against the nearest positioned ancestor.
+      // Measure left AND top within that containing block instead of the
+      // element itself.
+      if (el.tagName === 'PRE') {
+        const cb = el.offsetParent;
+        if (!cb) continue;
+        const cbRect = cb.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const preLeft = `${(bodyContentLeft + GUTTER_TARGET) - cbRect.left}px`;
+        const preTop = `${elRect.top - cbRect.top}px`;
+        if (el.style.getPropertyValue('--mps-before-left') !== preLeft) {
+          el.style.setProperty('--mps-before-left', preLeft);
+        }
+        if (el.style.getPropertyValue('--mps-pre-top') !== preTop) {
+          el.style.setProperty('--mps-pre-top', preTop);
+        }
+        continue;
+      }
       const x = el.getBoundingClientRect().left;
       // We want ::before's left edge at (bodyContentLeft + GUTTER_TARGET).
       // ::before is absolute-positioned in el's coord space, so:
@@ -208,6 +262,7 @@
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
+      mirrorPreLineNumbers();
       align();
       rewireChangedImages();
       setupBrokenImageFallback();
@@ -219,6 +274,24 @@
     schedule();
   }
   window.addEventListener('resize', schedule);
+  // Font loading reflows the document without any DOM mutation, so the
+  // observer never fires and measured offsets (notably the pre top vars)
+  // go stale. Re-align once the fonts settle.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(schedule);
+  // Same class of problem, ongoing: a successful late image load (or any
+  // other resource-driven height change) reflows everything below it with
+  // no attribute/class mutation and no resize. The pre numbers position
+  // against an ancestor via a measured top, so they'd strand mid-air until
+  // the next keystroke. Watching the content wrapper's size catches every
+  // such reflow; align()'s idempotent writes keep it from looping. Not
+  // covered by the visual harness - every scriptable DOM change also fires
+  // the MutationObserver, so the mutation-free trigger can't be synthesised
+  // there; verified by reasoning against a slow remote image.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(schedule).observe(
+      document.querySelector('.markdown-body') || document.body || document.documentElement
+    );
+  }
   // Mutation observer catches preview re-renders.
   //
   // VS Code's "Open Preview to the Side" applies edits via an in-place DOM
