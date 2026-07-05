@@ -86,7 +86,7 @@ All settings live under `markdownPreviewStyles.wikilinks.*`:
 | `enabled` | `true` | Master switch. Off = document-relative resolution (no workspace index). |
 | `extraIndexRoots` | `[]` | Extra folders to index alongside the open workspace. Useful when you keep notes outside the workspace (e.g. `~/Documents/notes`). Tilde-prefixed paths are expanded. Missing paths are skipped with a warning. |
 | `embedNotes` | `true` | Whether `![[name]]` for non-image targets renders inline (`true`) or as a link with the `mps-embed-fallback` style (`false`). |
-| `embedMaxBytes` | `262144` (256KB) | File size cap for inline transclusion. Larger targets degrade to a link. |
+| `embedMaxBytes` | `262144` (256KB) | Size cap for inline transclusion. Targets at or above the cap degrade to a link; `0` disables transclusion entirely. |
 
 The four keys appear in VS Code's Settings UI under "Markdown Preview Styles → Wikilinks".
 

@@ -57,7 +57,7 @@
         "markdownPreviewStyles.wikilinks.embedMaxBytes": {
           "type": "number",
           "default": 262144,
-          "description": "Maximum file size (bytes) for an inline note transclusion. Larger targets degrade to a wiki-link to protect the preview from accidentally embedding huge files."
+          "description": "Size cap (bytes) for an inline note transclusion. Targets at or above the cap degrade to a wiki-link to protect the preview from accidentally embedding huge files. 0 disables transclusion entirely."
         }
       }
     }
