@@ -12,6 +12,9 @@ const {
   __setWikiStateForTest,
   __resetWikiStateForTest,
   __rebuildWorkspaceIndexForTest,
+  buildResolvedHref,
+  safeHref,
+  safeImgSrc,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -1288,6 +1291,63 @@ test('mps_wikilink rule: javascript: scheme still rejected via safeHref', () => 
   });
 });
 
+// ---- Windows drive-letter paths ----------------------------------------------
+
+console.log('\nWindows drive-letter paths:');
+
+test('buildResolvedHref fallback emits vscode://file/C:/... for a Windows path', () => {
+  const href = buildResolvedHref('C:\\notes\\foo.md', null, null);
+  assert.strictEqual(href, 'vscode://file/C:/notes/foo.md');
+});
+
+test('buildResolvedHref fallback unchanged for a POSIX path', () => {
+  const href = buildResolvedHref('/root/notes/foo.md', null, null);
+  assert.strictEqual(href, 'vscode://file/root/notes/foo.md');
+});
+
+test('safeHref passes a drive-absolute path through, not a scheme rejection', () => {
+  assert.strictEqual(safeHref('C:/notes/foo.md'), 'C:/notes/foo.md');
+  assert.strictEqual(safeHref('C:\\notes\\foo.md'), 'C:\\notes\\foo.md');
+});
+
+test('safeImgSrc passes a drive-absolute path through', () => {
+  assert.strictEqual(safeImgSrc('C:/diagram.png'), 'C:/diagram.png');
+});
+
+test('safeHref/safeImgSrc still reject dangerous schemes', () => {
+  assert.strictEqual(safeHref('javascript:alert(1)'), '');
+  assert.strictEqual(safeHref('vbscript:MsgBox(1)'), '');
+  assert.strictEqual(safeImgSrc('javascript:alert(1)'), '');
+  assert.strictEqual(safeImgSrc('vbscript:MsgBox(1)'), '');
+});
+
+test('drive-relative C:foo (no separator) is still scheme-rejected', () => {
+  assert.strictEqual(safeHref('c:foo'), '');
+});
+
+// Note: on a real Windows port the click handler still drops unresolved
+// drive-letter hrefs (its scheme allowlist regex matches `C:` - see the
+// CLAUDE.md known edge cases); this asserts the href is emitted, not that
+// navigation succeeds.
+test('unresolved [[C:/notes/foo]] renders an href, not an inert span', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('[[C:/notes/foo]]');
+    const html = md.renderer.rules.mps_wikilink(tokens, 0);
+    assert.match(html, /href="C:\/notes\/foo"/);
+  });
+});
+
+test('![[C:/diagram.png]] stays an image token, not a rejected fallback', () => {
+  withIndex([], () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[C:/diagram.png]]');
+    assert.strictEqual(tokens[0].type, 'image');
+  });
+});
+
 // ---- Block-anchor core rule (mps_block_anchors) -----------------------------
 
 console.log('\nBlock anchor rule:');
@@ -1420,6 +1480,29 @@ test('![[name]] when target unresolved degrades to mps_wikilink with mps-embed-f
 test('![[name]] for an oversized target degrades to fallback', () => {
   const big = 'x'.repeat(300000); // > default 262144
   withTranscludeFixtures({ '/root/foo.md': big }, () => {
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta && tokens[0].meta.embed);
+  });
+});
+
+test('![[name]] for a target exactly at embedMaxBytes degrades to fallback', () => {
+  const content = 'x'.repeat(64);
+  withTranscludeFixtures({ '/root/foo.md': content }, () => {
+    __setWikiStateForTest({ config: { embedMaxBytes: 64 } });
+    const md = makeMd();
+    activate({ subscriptions: [] }).extendMarkdownIt(md);
+    const tokens = md.runInline('![[foo]]');
+    assert.strictEqual(tokens[0].type, 'mps_wikilink');
+    assert.ok(tokens[0].meta && tokens[0].meta.embed);
+  });
+});
+
+test('embedMaxBytes: 0 disables transclusion even for a 0-byte target', () => {
+  withTranscludeFixtures({ '/root/foo.md': '' }, () => {
+    __setWikiStateForTest({ config: { embedMaxBytes: 0 } });
     const md = makeMd();
     activate({ subscriptions: [] }).extendMarkdownIt(md);
     const tokens = md.runInline('![[foo]]');
@@ -1639,6 +1722,26 @@ testAsync('a superseded rebuild bails without leaving a duplicate or orphan watc
   assert.ok(w2 && !w2.disposed, "winning rebuild's watcher should be live");
   assert.ok(ctx.subscriptions.includes(w2), "winner's watcher registered in context.subscriptions");
   assert.strictEqual(ctx.subscriptions.length, 1, 'exactly one watcher registered (no leak)');
+  __resetWikiStateForTest();
+});
+
+// Repeated rebuilds (config/workspace-folder churn) must not accumulate dead
+// watcher disposables in context.subscriptions - each rebuild disposes the
+// previous watchers, so only the live ones should remain registered.
+testAsync('repeated rebuilds do not retain dead watcher handles in context.subscriptions', async () => {
+  __resetWikiStateForTest();
+  const ctx = { subscriptions: [] };
+  const mocks = [];
+  for (let round = 0; round < 3; round++) {
+    const mock = makeMockVscode(() => Promise.resolve([]));
+    mocks.push(mock);
+    await __rebuildWorkspaceIndexForTest(ctx, mock);
+  }
+  const live = ctx.subscriptions.filter(entry => !entry.disposed);
+  assert.strictEqual(live.length, 1, 'exactly one live watcher registered');
+  assert.strictEqual(ctx.subscriptions.length, 1,
+    `dead disposables retained: ${ctx.subscriptions.length - 1}`);
+  assert.strictEqual(mocks[2].created[0].disposed, false, 'final watcher live');
   __resetWikiStateForTest();
 });
 

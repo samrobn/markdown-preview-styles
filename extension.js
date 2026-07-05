@@ -191,8 +191,10 @@ function tryEmitTranscludeToken(state, path) {
   // Cheap size gate before reading. Skip if stat fails - the renderer
   // will surface the failure via the cycle/fallback path.
   try {
+    // >= so the documented cap is a hard limit, and embedMaxBytes: 0 means
+    // "never transclude" (every size, including 0, is >= 0).
     const stat = wikiStatFile(resolved);
-    if (stat.size > wikiConfig.embedMaxBytes) return false;
+    if (stat.size >= wikiConfig.embedMaxBytes) return false;
   } catch (_) {
     return false;
   }
@@ -306,7 +308,16 @@ function buildResolvedHref(resolvedPath, fragment, docPath) {
     rel = rel.split(path.sep).join('/'); // Windows backslashes → URL slashes
     return encodePathSegments(rel) + anchor;
   }
-  return 'vscode://file' + encodePathSegments(resolvedPath) + anchor;
+  // vscode://file needs a `/` between authority and path. POSIX absolute
+  // paths carry their own; a Windows drive path (C:\notes\foo.md) doesn't,
+  // so normalise to /C:/notes/foo.md. The drive segment keeps its literal
+  // `:` - vscode://file/C:/... is VS Code's documented shape.
+  const p = String(resolvedPath);
+  if (WINDOWS_DRIVE_RE.test(p)) {
+    const rest = p.slice(2).split('\\').join('/');
+    return 'vscode://file/' + p.slice(0, 2) + encodePathSegments(rest) + anchor;
+  }
+  return 'vscode://file' + encodePathSegments(p) + anchor;
 }
 
 // Expand `~` and `~/...` in a path string. No-op on absolute paths.
@@ -323,6 +334,11 @@ function escapeHtml(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
+
+// Single ASCII letter + `:` + path separator = a Windows drive root. Shared
+// by checkScheme (don't reject `C:` as a URL scheme) and buildResolvedHref
+// (vscode://file needs /C:/... normalisation) so the two can't drift.
+const WINDOWS_DRIVE_RE = /^[a-z]:[\\/]/i;
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#]|$)/i;
 function isImagePath(p) { return IMAGE_EXT_RE.test(String(p)); }
@@ -342,6 +358,11 @@ function basenameWithoutExt(p) {
 // a scheme prefix only to filter dangerous protocols.
 function checkScheme(raw) {
   const trimmed = String(raw).trim();
+  // A single letter + `:` + path separator is a Windows drive root
+  // (C:/notes, C:\notes), not a URL scheme - pass it through. Drive-relative
+  // `C:foo` (no separator) still parses as a scheme and gets rejected; no
+  // 1-char scheme is in either allowlist so nothing dangerous slips in.
+  if (WINDOWS_DRIVE_RE.test(trimmed)) return { trimmed, scheme: null };
   const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
   return { trimmed, scheme: schemeMatch ? schemeMatch[1].toLowerCase() : null };
 }
@@ -658,8 +679,14 @@ async function rebuildWorkspaceIndex(context, vscode) {
     embedMaxBytes: config.get('embedMaxBytes', 262144),
   };
 
-  // Tear down previous watchers.
-  for (const w of _activeWatchers) w.dispose();
+  // Tear down previous watchers - and drop them from context.subscriptions,
+  // which is only ever pushed to, so dead handles would otherwise accumulate
+  // across config/workspace-folder rebuilds until deactivate.
+  for (const w of _activeWatchers) {
+    w.dispose();
+    const idx = context.subscriptions.indexOf(w);
+    if (idx !== -1) context.subscriptions.splice(idx, 1);
+  }
   _activeWatchers = [];
 
   wikiIndex = new Map();
@@ -1269,6 +1296,9 @@ exports.resolveWikilinkTarget = resolveWikilinkTarget;
 exports.addToIndex = addToIndex;
 exports.removeFromIndex = removeFromIndex;
 exports.expandTilde = expandTilde;
+exports.buildResolvedHref = buildResolvedHref;
+exports.safeHref = safeHref;
+exports.safeImgSrc = safeImgSrc;
 exports.__setWikiStateForTest = __setWikiStateForTest;
 exports.__resetWikiStateForTest = __resetWikiStateForTest;
 // Exported for the concurrency test (rebuild generation guard). Takes the
