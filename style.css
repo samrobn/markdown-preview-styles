@@ -256,6 +256,24 @@ body blockquote.code-line::before {
   display: none !important;
 }
 
+/* A block embed alone on its source line is parser-split (a div can't nest
+   inside a p) into an EMPTY zero-height p.code-line + the .mps-embed-note
+   box as its next sibling. The paragraph still carries the line number,
+   and centred on a zero-height box it floats at the split point, crowding
+   the preceding blank-line number. Drop it onto the box's first text row:
+   box margin-top (0.75rem) + box padding-top (0.5rem) + half a body line -
+   half the pseudo's own line box (0.8rem font x 1.6 line-height / 2 =
+   0.64rem). VS Code emits --markdown-line-height as a UNITLESS multiplier
+   (markdown.preview.lineHeight, default 1.6) - never px, despite
+   markdown.css's own 22px fallback - so the row height is var x 1rem
+   (markdown.css sets the font-size var on html, so rem tracks it). A bare
+   `var / 2` added to a length is a type-invalid calc that silently drops
+   the whole declaration in the live preview. */
+body p.code-line:empty:has(+ .mps-embed-note)::before {
+  top: calc(0.61rem + (1rem * var(--markdown-line-height, 1.6)) / 2) !important;
+  transform: none !important;
+}
+
 /* Code blocks: the fence's source-map attrs land on the <code>, whose
    ::before is clipped by the pre's scroll box (VS Code's markdown.css sets
    overflow: auto on pre:not(.hljs)). preview.js mirrors the line onto the
