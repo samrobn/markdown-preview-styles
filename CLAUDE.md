@@ -46,6 +46,8 @@ The visual harness in `test/visual/` runs real markdown-it + our plugin + VS Cod
 | `markdownPreviewStyles.wikilinks.*` settings      | None - `onDidChangeConfiguration` rebuilds the index live |
 | Adding/removing/renaming a `.md` file             | None - `FileSystemWatcher` updates the index live    |
 
+Branch work isn't live until the **main checkout** holds the commit - the extension symlink points there, not at worktrees. `git switch --detach <branch>` (the worktree holds the branch name), reload per the table, and switch back to `main` after landing.
+
 `Developer: Reload Window` is rarely enough - the markdown preview caches its compiled markdown-it instance across window reloads. Renaming the symlink folder is different: VS Code detects a *changed extension* and prompts to reload the **extension host**, which re-activates the extension wholesale (new version, `extension.js`, CSS). Accepting that prompt is enough for a version bump - a full Cmd+Q is belt-and-braces (verified on a 0.1.0 → 0.2.0 bump).
 
 ## Architecture gotchas (hard-won; do not relearn)
