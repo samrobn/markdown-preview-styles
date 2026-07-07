@@ -758,6 +758,74 @@ async function rebuildWorkspaceIndex(context, vscode) {
   } catch (_) {}
 }
 
+// ---- Stale-preview mitigation (upstream vscode#147718) ----------------------
+//
+// VS Code's preview restores stale HTML when a preview tab is revisited after
+// its document changed while the tab was visible - mechanism in CLAUDE.md
+// ("The preview restores stale HTML on tab revisit"). Mitigation: mark
+// changed markdown docs; when a preview-editor tab for a marked doc becomes
+// active, force one global markdown.preview.refresh (re-baselines every
+// preview, hence servicing all marks at once). False positives cost one
+// redundant refresh: hidden-tab edits (which self-heal upstream), and
+// metadata changes on an already-active marked tab (isActive is a snapshot,
+// not a transition). Known gap: group-visibility restores (maximising
+// another group, Zen Mode) fire no tab event and stay uncorrected. Classic
+// Open Preview panels (TabInputWebview, no uri exposed) are unhandled -
+// we don't use them.
+
+const PREVIEW_EDITOR_VIEW_TYPE = 'vscode.markdown.preview.editor';
+const _mdChangedSinceFullRender = new Set();
+
+function markChangedDocument(changedSet, event) {
+  if (event.document.languageId !== 'markdown') return;
+  if (!event.contentChanges.length) return;
+  changedSet.add(event.document.uri.toString());
+}
+
+// Resolves true when a refresh was dispatched, false when no marked preview
+// tab became active. Marks are only removed once the refresh succeeds - a
+// failed refresh keeps them so the next activation retries - and only the
+// marks snapshotted at dispatch are removed, so a doc changing while the
+// refresh is in flight isn't wiped by a render that predates the change.
+async function refreshStalePreviewOnTabActivation(changedSet, event, refresh) {
+  for (const tab of (event.changed || [])) {
+    if (!tab.isActive) continue;
+    const input = tab.input;
+    if (!input || input.viewType !== PREVIEW_EDITOR_VIEW_TYPE || !input.uri) continue;
+    if (!changedSet.has(input.uri.toString())) continue;
+    const serviced = [...changedSet];
+    try {
+      await refresh();
+    } catch (_) {
+      return true;
+    }
+    for (const uri of serviced) changedSet.delete(uri);
+    return true;
+  }
+  return false;
+}
+
+function initStaleRefresh(context) {
+  let vscode;
+  try {
+    vscode = require('vscode');
+  } catch (_) {
+    return; // Not running inside VS Code (unit test or harness). Skip.
+  }
+  if (!vscode.window.tabGroups) return; // tabs API absent in older builds
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(event =>
+      markChangedDocument(_mdChangedSinceFullRender, event)
+    ),
+    vscode.window.tabGroups.onDidChangeTabs(event =>
+      refreshStalePreviewOnTabActivation(_mdChangedSinceFullRender, event, () =>
+        vscode.commands.executeCommand('markdown.preview.refresh')
+      )
+    )
+  );
+}
+
 // Returns the canonical (realpath-resolved) absolute path, or null if the
 // path doesn't exist or isn't accessible. Used to deduplicate symlinked or
 // overlapping roots without crashing on missing extraIndexRoots entries.
@@ -779,6 +847,7 @@ function activate(context) {
     initWorkspaceIndex(context).catch(err =>
       console.warn('markdown-preview-styles: index init failed', err)
     );
+    initStaleRefresh(context);
   }
   return {
     extendMarkdownIt(md) {
@@ -1299,6 +1368,8 @@ exports.expandTilde = expandTilde;
 exports.buildResolvedHref = buildResolvedHref;
 exports.safeHref = safeHref;
 exports.safeImgSrc = safeImgSrc;
+exports.markChangedDocument = markChangedDocument;
+exports.refreshStalePreviewOnTabActivation = refreshStalePreviewOnTabActivation;
 exports.__setWikiStateForTest = __setWikiStateForTest;
 exports.__resetWikiStateForTest = __resetWikiStateForTest;
 // Exported for the concurrency test (rebuild generation guard). Takes the
