@@ -15,6 +15,8 @@ const {
   buildResolvedHref,
   safeHref,
   safeImgSrc,
+  markChangedDocument,
+  refreshStalePreviewOnTabActivation,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -1743,6 +1745,128 @@ testAsync('repeated rebuilds do not retain dead watcher handles in context.subsc
     `dead disposables retained: ${ctx.subscriptions.length - 1}`);
   assert.strictEqual(mocks[2].created[0].disposed, false, 'final watcher live');
   __resetWikiStateForTest();
+});
+
+// ---- Stale-preview mitigation (upstream vscode#147718) ----------------------
+
+function mdChangeEvent(uri, opts = {}) {
+  return {
+    document: { languageId: opts.languageId || 'markdown', uri: { toString: () => uri } },
+    contentChanges: opts.emptyChanges ? [] : [{ text: 'x' }],
+  };
+}
+
+function previewTab(uri, opts = {}) {
+  const tab = { isActive: opts.isActive !== false };
+  if (!opts.noInput) {
+    tab.input = {
+      viewType: opts.viewType || 'vscode.markdown.preview.editor',
+      uri: uri === null ? undefined : { toString: () => uri },
+    };
+  }
+  return tab;
+}
+
+test('markChangedDocument: records a markdown content change', () => {
+  const changed = new Set();
+  markChangedDocument(changed, mdChangeEvent('file:///a.md'));
+  assert.ok(changed.has('file:///a.md'));
+});
+
+test('markChangedDocument: ignores non-markdown documents', () => {
+  const changed = new Set();
+  markChangedDocument(changed, mdChangeEvent('file:///a.js', { languageId: 'javascript' }));
+  assert.strictEqual(changed.size, 0);
+});
+
+test('markChangedDocument: ignores events with no content changes', () => {
+  const changed = new Set();
+  markChangedDocument(changed, mdChangeEvent('file:///a.md', { emptyChanges: true }));
+  assert.strictEqual(changed.size, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: refreshes and clears when a marked preview tab activates', async () => {
+  const changed = new Set(['file:///a.md', 'file:///b.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] }, () => { refreshes++; });
+  assert.strictEqual(fired, true);
+  assert.strictEqual(refreshes, 1);
+  // markdown.preview.refresh is global - every preview re-baselines, so all
+  // marks present at dispatch clear, not just the activated resource.
+  assert.strictEqual(changed.size, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: no refresh for an unmarked resource', async () => {
+  const changed = new Set(['file:///other.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] }, () => { refreshes++; });
+  assert.strictEqual(fired, false);
+  assert.strictEqual(refreshes, 0);
+  assert.ok(changed.has('file:///other.md'));
+});
+
+testAsync('refreshStalePreviewOnTabActivation: skips inactive tabs', async () => {
+  const changed = new Set(['file:///a.md']);
+  let refreshes = 0;
+  await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md', { isActive: false })] }, () => { refreshes++; });
+  assert.strictEqual(refreshes, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: skips non-preview tabs and missing inputs', async () => {
+  const changed = new Set(['file:///a.md']);
+  let refreshes = 0;
+  await refreshStalePreviewOnTabActivation(changed, {
+    changed: [
+      previewTab('file:///a.md', { viewType: 'vscode.markdown.editor' }),
+      previewTab('file:///a.md', { noInput: true }),
+      previewTab(null),
+    ],
+  }, () => { refreshes++; });
+  assert.strictEqual(refreshes, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: ignores opened tabs (fresh webviews render full)', async () => {
+  const changed = new Set(['file:///a.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnTabActivation(
+    changed, { opened: [previewTab('file:///a.md')], changed: [] }, () => { refreshes++; });
+  assert.strictEqual(fired, false);
+  assert.strictEqual(refreshes, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: refreshes once for multiple marked tabs', async () => {
+  const changed = new Set(['file:///a.md', 'file:///b.md']);
+  let refreshes = 0;
+  await refreshStalePreviewOnTabActivation(changed, {
+    changed: [previewTab('file:///a.md'), previewTab('file:///b.md')],
+  }, () => { refreshes++; });
+  assert.strictEqual(refreshes, 1);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: a failed refresh keeps marks so the next activation retries', async () => {
+  const changed = new Set(['file:///a.md']);
+  const fired = await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] },
+    () => Promise.reject(new Error('command unavailable')));
+  assert.strictEqual(fired, true);
+  assert.ok(changed.has('file:///a.md'), 'mark survives a failed refresh');
+  let refreshes = 0;
+  await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] }, () => { refreshes++; });
+  assert.strictEqual(refreshes, 1, 'retried on the next activation');
+  assert.strictEqual(changed.size, 0);
+});
+
+testAsync('refreshStalePreviewOnTabActivation: a mark added mid-refresh survives the clear', async () => {
+  const changed = new Set(['file:///a.md']);
+  await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] },
+    async () => { changed.add('file:///b.md'); });
+  assert.ok(!changed.has('file:///a.md'), 'serviced mark cleared');
+  assert.ok(changed.has('file:///b.md'), 'in-flight mark kept - its render may predate the change');
 });
 
 // ---- Summary ----------------------------------------------------------------

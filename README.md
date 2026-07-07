@@ -57,6 +57,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Bare filenames are retried under `attachments/` on first error. Failed loads show a dashed placeholder with the original path.
 - Renders `![[note]]` (non-image) embeds **inline** as transclusions - the referenced note's body (frontmatter stripped) renders inside an `mps-embed-note` container. Optional `#heading` or `^block` fragment narrows the embed to that section. Recursive embeds are capped at depth 2 to prevent cycles.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
+- Works around [an upstream VS Code bug](https://github.com/microsoft/vscode/issues/147718) where revisiting a preview tab shows stale content if the document changed while the tab was visible: the extension forces one preview refresh when a preview tab for a changed document becomes active.
 
 ## Wikilink syntax
 
