@@ -43,7 +43,7 @@
      Sized down a step - Martian Mono renders wide for its em box. */
   --mps-properties-font: "Martian Mono",
     var(--vscode-font-family, sans-serif);
-  --mps-properties-size: 0.85em;
+  --mps-properties-size: 0.8em;
 }
 
 body h1,
