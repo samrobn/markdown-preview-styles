@@ -9,7 +9,7 @@ Two things it does:
 1. Injects custom CSS into every preview (`markdown.previewStyles`).
 2. Prepends an Obsidian-style **Properties** table above any markdown file with YAML frontmatter, plus a source-line gutter and other tweaks (`markdown.markdownItPlugins`).
 
-![Preview of example.md with the extension active](docs/preview.png)
+![Preview of example.md with the extension active](https://raw.githubusercontent.com/samrobn/markdown-preview-styles/main/docs/preview.png)
 
 ## Install / re-install
 
@@ -54,7 +54,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
 - Inline code (backtick-quoted spans) shrunk to `0.9em`. Fenced code blocks inside `<pre>` are untouched.
 - Renders YAML frontmatter as a Properties table with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
-- Resolves `[[wiki-links]]` against a **workspace-wide index** of every `.md` file under the open folders (plus any extra roots configured via `markdownPreviewStyles.wikilinks.extraIndexRoots`). Case-insensitive basename match; shortest-path tiebreak on collision. Supports the full Obsidian/Foam syntax matrix - see [Wikilink syntax](#wikilink-syntax) below.
+- Resolves `[[wiki-links]]` against a **workspace-wide index** of every `.md` file under the open folders (plus any extra roots configured via `markdownPreviewStyles.wikilinks.extraIndexRoots`). Case-insensitive basename match; shortest-path tiebreak on collision. Supports the full Obsidian/Foam syntax matrix - see the Wikilink syntax table below.
 - Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Bare filenames are retried under `attachments/` on first error. Failed loads show a dashed placeholder with the original path.
 - Renders `![[note]]` (non-image) embeds **inline** as transclusions - the referenced note's body (frontmatter stripped) renders inside an `mps-embed-note` container. Optional `#heading` or `^block` fragment narrows the embed to that section. Recursive embeds are capped at depth 2 to prevent cycles.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
@@ -107,4 +107,4 @@ Date-only values are formatted without timezone shift so the day always matches 
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the reload-by-change-type matrix, architecture gotchas, tests, and project conventions.
+See [CLAUDE.md](https://github.com/samrobn/markdown-preview-styles/blob/main/CLAUDE.md) for the reload-by-change-type matrix, architecture gotchas, tests, and project conventions.
