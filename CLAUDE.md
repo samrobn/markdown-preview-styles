@@ -258,6 +258,10 @@ Within a single root, ordering is shortest-path then alphabetical (intuitive "th
 
 Don't try to make "shortest path" global - it would require a notion of "canonical" root that the user can't reasonably specify.
 
+### The extension details tab can't load relative README resources
+
+The details tab rendered the README's relative `docs/preview.png` as a broken image (observed 2026-07-18). Published extensions never exercise relative paths - vsce/the Marketplace rewrites README URLs to absolute at publish - so relative resources in a sideloaded symlinked extension are the untested path; mechanism unpinned. Fix: absolute `raw.githubusercontent.com` URLs (public repo). Consequence: the details tab shows **main's** copy - a PR's image change isn't visible until merged, plus ~5 min raw cache; don't read a stale image as a broken fix. `docs/preview.png` is stitched from aligned full-width scroll captures of example.md by exact row-overlap matching; regenerate it after visible style changes or it silently mis-sells the extension.
+
 ## Project conventions
 
 - **No runtime dependencies.** The in-tree `parseFrontmatter` and `parseWikilinkTarget` are intentional - they cover the shape we need without pulling in `js-yaml` or `markdown-it-wikilinks`. Do not propose adding either without an explicit conversation; see "bespoke wikilink parser is the deliberate choice" gotcha above for the wikilink-parser rationale. Test-only dev deps in `test/` would be acceptable if the gap matters.
