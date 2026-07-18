@@ -68,7 +68,7 @@
     BlinkMacSystemFont, "Segoe UI", sans-serif;
   /* Bold prose weight - interpolated on the variable wght axis; the full
      700 reads heavy against Quattro's regular. */
-  --mps-body-bold-weight: 560;
+  --mps-body-bold-weight: 600;
 }
 
 body {
