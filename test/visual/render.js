@@ -121,7 +121,10 @@ function render(srcPath) {
   // wrapper's children.
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-${css}
+/* This chrome-mirror block deliberately precedes the style.css block:
+   live, the webview defaults + markdown.css load BEFORE contributed
+   previewStyles, so our stylesheet's same-specificity overrides (e.g.
+   the body font) must also come later here or the cascade lies. */
 /* Match VS Code's preview root font-size (14px). The harness used to inherit
    the browser default 16px, which silently hid bugs caused by the
    discrepancy between hard-coded pixel offsets (preview.js GUTTER_TARGET)
@@ -210,6 +213,8 @@ pre {
 /* Match VS Code's preview: every .code-line is position: relative so its
    ::before is contained within its own box, not the document body. */
 .code-line { position: relative; }
+</style><style>
+${css}
 </style></head>
 <body class="vscode-dark">
 <div class="markdown-body" dir="auto">
@@ -488,6 +493,19 @@ const PAGE_ASSERTIONS = `(() => {
   } else {
     results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1/h2 in .markdown-body' });
   }
+
+  // Body prose font: Quattro must load and win the cascade over the
+  // chrome-mirror's body rule (style.css loads after markdown.css live -
+  // the harness mirrors that order; a regression here means the blocks
+  // got reordered).
+  const bodyFamily = getComputedStyle(document.body).fontFamily;
+  results.push({
+    label: 'body font: iA Writer Quattro S loads and applies',
+    ok: document.fonts.check('1em "iA Writer Quattro S"') &&
+        bodyFamily.includes('iA Writer Quattro S'),
+    actual: 'loaded=' + document.fonts.check('1em "iA Writer Quattro S"') +
+      ' family=' + bodyFamily.split(',')[0],
+  });
 
   return JSON.stringify(results);
 })()`;
