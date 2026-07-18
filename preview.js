@@ -219,7 +219,11 @@
           const altText = (img.getAttribute('alt') || '').trim();
           if (altText) {
             img.setAttribute('data-mps-alt', altText);
+            // alt="" conventionally marks an img decorative; role="img" +
+            // aria-label keeps the placeholder in the accessibility tree
+            // with the filename as its accessible name.
             img.setAttribute('aria-label', altText);
+            img.setAttribute('role', 'img');
           }
           img.setAttribute('alt', '');
         }
@@ -265,13 +269,26 @@
         img.removeAttribute('data-mps-wired');
         img.removeAttribute('data-mps-fallback-tried');
         img.classList.remove('mps-broken');
-        // Un-blank the alt the broken path cleared, so the replacement
-        // image carries its proper alt text again.
         if (img.hasAttribute('data-mps-alt')) {
-          img.setAttribute('alt', img.getAttribute('data-mps-alt'));
+          // The DOM diff patches the NEW image's alt in with its src; only
+          // fall back to the stash when the diff left alt blanked. An
+          // unconditional restore here once overwrote the new image's alt
+          // with the previous image's stashed one.
+          if (!img.getAttribute('alt')) {
+            img.setAttribute('alt', img.getAttribute('data-mps-alt'));
+          }
           img.removeAttribute('data-mps-alt');
           img.removeAttribute('aria-label');
+          img.removeAttribute('role');
         }
+      } else if (img.classList.contains('mps-broken') &&
+                 img.hasAttribute('data-mps-alt') && img.getAttribute('alt')) {
+        // The diff can also re-sync a blanked alt back to the render's
+        // non-blank value without touching src (extension.js always emits
+        // one) - Chromium's native [glyph][alt] fallback then reappears
+        // jammed against the CSS-drawn placeholder. Re-blank it; the write
+        // only fires when alt is non-empty, so no observer loop.
+        img.setAttribute('alt', '');
       }
     }
   }
@@ -331,7 +348,10 @@
     // wired state so the new src gets fresh fallback handling. We write
     // src ourselves during the attachments/ retry; that write is gated by
     // data-mps-fallback-tried (not in this filter) so it doesn't loop.
-    attributeFilter: ['style', 'class', 'data-line', 'data-mps-line', 'src'],
+    // 'alt' is included so a diff re-syncing a blanked broken-image alt
+    // triggers the re-blank guard in rewireChangedImages; our own alt
+    // writes there are conditional on a non-empty value, so no loop.
+    attributeFilter: ['style', 'class', 'data-line', 'data-mps-line', 'src', 'alt'],
     characterData: true,
   });
 })();

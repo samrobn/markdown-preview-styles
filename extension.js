@@ -967,7 +967,9 @@ function activate(context) {
             // unused by the default renderer; children is what matters.
             // Alt is the full basename WITH extension. For accessibility
             // it's the technical identifier; for the broken-image fallback
-            // (which renders the alt next to the browser's broken glyph)
+            // (preview.js blanks the alt on error and CSS re-renders it
+            // from data-mps-alt - generated content, so the filename is
+            // not find-in-page matchable or selectable there; accepted)
             // the extension is useful context ("it was looking for a .png").
             // The wiki-link display elsewhere uses basename-without-ext for
             // readability in body text - different context.
