@@ -918,3 +918,29 @@ body .mps-embed-cycle {
   font-family: var(--vscode-editor-font-family);
   font-size: 0.85em;
 }
+
+/* Narrow viewports: rendered-diff panes and skinny preview splits.
+   With the preview set as the default .md editor, an SCM diff renders
+   each side as its own preview webview around 280px wide - the 5em
+   gutter reservation eats half of that and the display headings shatter
+   into per-word lines. Below the threshold, give the width back: no
+   gutter, no line numbers, book-size headings. Media-query em ignores
+   author CSS and resolves against the browser-initial 16px, so 30em is
+   a fixed 480px regardless of markdown.preview.fontSize - diff panes
+   sit well under it, half-window previews well over. Keep this block
+   last - the overrides rely on source order against the rules above. */
+@media (max-width: 30em) {
+  body {
+    padding-left: 0;
+  }
+  body .code-line:not(table .code-line)::before,
+  body pre.mps-pre-line::before {
+    content: none !important;
+  }
+  :root {
+    --mps-h1-size: 1.714rem;
+    --mps-h2-size: 1.357rem;
+    --mps-h3-size: 1.143rem;
+    --mps-h4-size: 1rem;
+  }
+}
