@@ -518,6 +518,34 @@ const PAGE_ASSERTIONS = `(() => {
       ' family=' + bodyFamily.split(',')[0],
   });
 
+  // Narrow-viewport gate: the headless viewport can't shrink below 480px
+  // (viewport/resizeTo are inert - documented gotcha), so assert the
+  // @media block structurally via CSSOM. Catches deletion, malformed
+  // selectors, or lost declarations; live cascade behaviour at narrow
+  // widths stays with the scratch-instance E2E path.
+  const mediaRule = [...document.styleSheets]
+    .flatMap(sheet => { try { return [...sheet.cssRules]; } catch { return []; } })
+    .find(rule => rule.media && rule.conditionText === '(max-width: 30em)');
+  if (!mediaRule) {
+    results.push({ label: 'narrow-viewport gate present', ok: false, reason: 'no @media (max-width: 30em) rule found' });
+  } else {
+    const gateCss = mediaRule.cssText;
+    const wanted = [
+      ['body gutter padding zeroed', 'padding-left: 0'],
+      ['gutter numbers suppressed', 'content: none'],
+      ['pre mirror suppressed too', 'pre.mps-pre-line::before'],
+      // Chromium serialises calc(100vw - 6rem) as calc(-6rem + 100vw) -
+      // match the operands, not the order.
+      ['wide-content cap re-reserved', 'max-width: calc('],
+      ['wide-content cap uses 6rem reserve', '6rem'],
+      ['h1 step-down width-coupled', '--mps-h1-size: min(1.714rem, 8.5vw)'],
+      ['h4 step avoids h5 collision', '--mps-h4-size: min(1.071rem, 5.5vw)'],
+    ];
+    for (const [what, needle] of wanted) {
+      results.push({ label: 'narrow gate: ' + what, ok: gateCss.includes(needle), needle });
+    }
+  }
+
   return JSON.stringify(results);
 })()`;
 
