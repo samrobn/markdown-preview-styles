@@ -1,9 +1,9 @@
 /* =========================================================================
    TYPOGRAPHY - the one place to tune the preview's type.
 
-   Headings get a monospace display treatment: Martian Mono ExtraLight
-   (bundled - SIL OFL 1.1, see fonts/OFL.txt; the Std-width 200-weight
-   static build), hairline weight at display sizes, theme-default colour.
+   Headings get a monospace display treatment: Martian Mono Light
+   (bundled - SIL OFL 1.1, see fonts/OFL.txt; the Std-width 300-weight
+   static build), light weight at display sizes, theme-default colour.
    Tweak the custom properties below; the heading rules only consume them.
 
    Body text is deliberately NOT styled here - VS Code already exposes
@@ -12,17 +12,17 @@
 @font-face {
   font-family: "Martian Mono";
   font-style: normal;
-  font-weight: 200;
+  font-weight: 300;
   font-display: swap;
   /* Resolves against this stylesheet's webview URI, so the bundled file
      loads from the extension directory with no CSP work. */
-  src: url("./fonts/MartianMono-StdxLt.woff2") format("woff2");
+  src: url("./fonts/MartianMono-StdLt.woff2") format("woff2");
 }
 
 :root {
   --mps-heading-font: "Martian Mono", ui-monospace, SFMono-Regular,
     Menlo, Consolas, monospace;
-  --mps-heading-weight: 200;
+  --mps-heading-weight: 300;
   /* Martian Mono is already wide - keep the tracking gentler than a
      typical display-mono squeeze. */
   --mps-heading-tracking: -0.02em;
