@@ -53,6 +53,7 @@ The extension's defaults assume a few preview settings. `breaks` and `frontMatte
 - Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Bare filenames are retried under `attachments/` on first error. Failed loads show a dashed placeholder with the original path.
 - Renders `![[note]]` (non-image) embeds **inline** as transclusions - the referenced note's body (frontmatter stripped) renders inside an `mps-embed-note` container. Optional `#heading` or `^block` fragment narrows the embed to that section. Recursive embeds are capped at depth 2 to prevent cycles.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
+- Makes **task-list checkboxes clickable in the preview**: clicking a rendered `- [ ]` / `- [x]` checkbox flips the marker on the source line (and saves, when the document had no unsaved changes). Requires an extension that renders task-list checkboxes in the preview (e.g. Markdown All in One) - this extension makes existing checkboxes interactive rather than rendering its own. The click routes through a `vscode://` deep link; VS Code asks once per machine to allow the extension to handle its URIs.
 - Works around [an upstream VS Code bug](https://github.com/microsoft/vscode/issues/147718) where revisiting a preview tab shows stale content if the document changed while the tab was visible: the extension forces one preview refresh when a preview tab for a changed document becomes active.
 
 ## Wikilink syntax
@@ -98,6 +99,7 @@ Date-only values are formatted without timezone shift so the day always matches 
 - **Workspace index is built asynchronously on activation.** Open previews are refreshed automatically once the index finishes building, but there's a brief window where wikilinks render with document-relative hrefs before the refresh fires.
 - **Watcher behaviour on iCloud-synced roots is noisy.** If you point `extraIndexRoots` at an iCloud folder, the file watcher fires on sync events as well as edits. Index correctness is unaffected; CPU may briefly spike on heavy sync activity.
 - **Wiki-link `<a>` clicks go through VS Code's webview link handler.** Non-existent targets (no index match and no document-relative file) surface a "file not found" toast rather than navigating anywhere - no in-preview broken-link styling.
+- **Checkbox toggling depends on a checkbox-rendering extension.** Without one (e.g. Markdown All in One), task lists render as plain text and there is nothing to click. The toggle round trip (deep link → source edit → re-render) also lags a genuine click slightly; the box flips optimistically and the render confirms it. Checkboxes inside `![[note]]` transclusions are deliberately inert - their line numbers belong to the embedded file, not the previewed one.
 
 ## Development
 

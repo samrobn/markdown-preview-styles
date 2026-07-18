@@ -326,6 +326,29 @@ body pre.mps-pre-line::before {
   opacity: 0.55;
 }
 
+/* Interactive task-list checkboxes. preview.js wraps each checkbox
+   (rendered by Markdown All in One's markdown-it-task-lists) in this
+   anchor; extension.js's UriHandler flips the source marker when a click
+   activates it. MAIO's checkbox.css makes the input click-transparent
+   (pointer-events: none) and hangs it in the list's padding gutter with
+   margin-left: -20px - the anchor takes over the gutter pull so its hit
+   region follows the visual box, and the input override (higher
+   specificity than MAIO's single-class rule) pins the input inside it.
+   inline-block + tight radius keep the click/focus highlight hugging the
+   box rather than sprawling along the line. */
+a.mps-task-toggle {
+  margin-left: -20px;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+  line-height: 1;
+  border-radius: 3px;
+}
+a.mps-task-toggle > input.task-list-item-checkbox {
+  pointer-events: none;
+  margin-left: 0;
+}
+
 /* Nested list compensation. extension.js emits `data-mps-list-depth` on
    ul/ol/li tokens (= number of ul/ol ancestors). Each level pushes the
    element right by the browser's ul padding-inline-start (~2.5em default,

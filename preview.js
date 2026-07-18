@@ -293,6 +293,112 @@
     }
   }
 
+  // Interactive task-list checkboxes: wrap each rendered checkbox (Markdown
+  // All in One's markdown-it-task-lists markup - without that extension no
+  // checkboxes render and this is a no-op) in a real anchor whose href is a
+  // vscode:// deep link; extension.js's UriHandler flips the marker on the
+  // source line. The mechanism is load-bearing and non-obvious - see the
+  // CLAUDE.md gotcha (only a REAL anchor activated by a REAL click launches
+  // the protocol from the webview) before changing any of it.
+  let cachedSettingsRaw = null;
+  let cachedSource = null;
+  function previewSource() {
+    const meta = document.getElementById('vscode-markdown-preview-data');
+    const raw = meta && meta.dataset.settings;
+    if (!raw) return null;
+    // Memoised on the raw JSON - this runs on every schedule() pass.
+    if (raw !== cachedSettingsRaw) {
+      cachedSettingsRaw = raw;
+      try {
+        cachedSource = JSON.parse(raw).source || null;
+      } catch {
+        cachedSource = null;
+      }
+    }
+    return cachedSource;
+  }
+
+  function toggleHref(source, line) {
+    return 'vscode://local.markdown-preview-styles/toggle?doc=' +
+      encodeURIComponent(source) + '&line=' + encodeURIComponent(line);
+  }
+
+  function retrofitTaskCheckboxes() {
+    const source = previewSource();
+    if (!source) return;
+    for (const box of document.querySelectorAll('input.task-list-item-checkbox')) {
+      const listItem = box.closest('li.task-list-item');
+      if (!listItem) continue;
+      // Transcluded content's data-line is slice-relative - wrong document.
+      if (listItem.closest('.mps-embed-note')) continue;
+      // Label-wrap renderers (markdown-it-task-lists label mode) would turn
+      // every label-text click into a synthetic input click bubbling through
+      // the anchor - leave those checkboxes inert rather than misfiring.
+      if (box.closest('label')) continue;
+      const line = listItem.getAttribute('data-line');
+      if (line === null) continue;
+      let anchor = box.parentElement;
+      if (!anchor.classList.contains('mps-task-toggle')) {
+        anchor = document.createElement('a');
+        anchor.className = 'mps-task-toggle';
+        // The anchor is the single interactive control; the input is
+        // presentation. One tab stop, checkbox semantics for AT, and no
+        // keyboard path to the input (whose native Space toggle would set
+        // dirty checkedness and fight attribute-driven state).
+        anchor.setAttribute('role', 'checkbox');
+        anchor.setAttribute('aria-label', 'Toggle task');
+        box.replaceWith(anchor);
+        anchor.appendChild(box);
+        box.tabIndex = -1;
+        box.setAttribute('aria-hidden', 'true');
+      }
+      // Idempotent writes - the attribute-watching MutationObserver re-runs
+      // this pass on every change it makes; unchanged passes settle.
+      const href = toggleHref(source, line);
+      if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href);
+      const checkedNow = box.hasAttribute('checked') ? 'true' : 'false';
+      if (anchor.getAttribute('aria-checked') !== checkedNow) {
+        anchor.setAttribute('aria-checked', checkedNow);
+      }
+    }
+  }
+
+  // Optimistic flip: the real round trip (protocol launch -> source edit ->
+  // save -> debounced re-render) lags noticeably behind the click, so flip
+  // the box immediately; the next render confirms or corrects it.
+  document.addEventListener('click', (event) => {
+    // Modified or non-primary clicks divert the navigation (open-elsewhere
+    // semantics) - don't flip a box whose toggle may never fire.
+    if (event.button !== 0 || event.ctrlKey || event.metaKey ||
+        event.shiftKey || event.altKey) return;
+    const target = event.target;
+    if (!target || !target.closest) return;
+    const anchor = target.closest('a.mps-task-toggle');
+    if (!anchor) return;
+    const box = anchor.querySelector('input');
+    if (!box) return;
+    // Re-derive the href from the CURRENT data-line before the native
+    // activation reads it - a DOM patch may have renumbered lines after the
+    // last (rAF-debounced) retrofit pass, and a stale line would flip a
+    // neighbouring item.
+    const listItem = anchor.closest('li.task-list-item');
+    const source = previewSource();
+    const line = listItem && listItem.getAttribute('data-line');
+    if (source && line !== null) {
+      anchor.setAttribute('href', toggleHref(source, line));
+    }
+    // Flip the ATTRIBUTE, not the property: a property write sets the
+    // input's dirty-checkedness flag, after which the DOM differ's
+    // attribute-level patches stop affecting rendered state. The input is
+    // never property-written or directly interacted with (pointer-events
+    // none, tabIndex -1), so default checkedness stays authoritative and
+    // repaints immediately.
+    if (box.hasAttribute('checked')) box.removeAttribute('checked');
+    else box.setAttribute('checked', '');
+    anchor.setAttribute('aria-checked', box.hasAttribute('checked') ? 'true' : 'false');
+    // No preventDefault: the anchor's native activation IS the toggle.
+  }, true);
+
   // Run on initial load and any time the preview re-flows.
   let scheduled = false;
   function schedule() {
@@ -304,6 +410,7 @@
       align();
       rewireChangedImages();
       setupBrokenImageFallback();
+      retrofitTaskCheckboxes();
     });
   }
   if (document.readyState === 'loading') {

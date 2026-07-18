@@ -611,16 +611,22 @@ function renderProperties(data, docPath) {
   return `<aside class="mps-properties" aria-label="Frontmatter properties"><div class="mps-properties-title">Properties</div><table class="mps-properties-table"><tbody>${rows}</tbody></table></aside>`;
 }
 
+// The vscode module only resolves inside a VS Code host - unit tests and
+// the visual harness run in plain Node, where every init path no-ops.
+function requireVscode() {
+  try {
+    return require('vscode');
+  } catch (_) {
+    return null;
+  }
+}
+
 // Build the workspace index from VS Code's workspace API. Returns an
 // array of { vscode, watchers } so deactivate can dispose. No-op outside
 // of a VS Code host (vscode require throws in unit tests / Node-only runs).
 async function initWorkspaceIndex(context) {
-  let vscode;
-  try {
-    vscode = require('vscode');
-  } catch (_) {
-    return; // Not running inside VS Code (unit test or harness). Skip.
-  }
+  const vscode = requireVscode();
+  if (!vscode) return;
 
   const config = vscode.workspace.getConfiguration('markdownPreviewStyles.wikilinks');
   wikiConfig = {
@@ -844,12 +850,8 @@ async function dispatchGlobalRefresh(changedSet, unfocusedSet, refresh) {
 }
 
 function initStaleRefresh(context) {
-  let vscode;
-  try {
-    vscode = require('vscode');
-  } catch (_) {
-    return; // Not running inside VS Code (unit test or harness). Skip.
-  }
+  const vscode = requireVscode();
+  if (!vscode) return;
   if (!vscode.window.tabGroups) return; // tabs API absent in older builds
 
   const refresh = () => vscode.commands.executeCommand('markdown.preview.refresh');
@@ -877,6 +879,90 @@ function initStaleRefresh(context) {
   }
 }
 
+// Preview checkbox toggling. preview.js wraps each rendered task-list
+// checkbox in an anchor whose href is vscode://local.markdown-preview-styles
+// /toggle?doc=<uri>&line=<n>; a genuine click launches the protocol, VS Code
+// routes it here (one-time per-machine "open this URI" confirm), and the
+// handler flips the marker on the source line. See the CLAUDE.md gotcha for
+// why the channel is a deep link and why the anchor must be real.
+function initCheckboxToggle(context) {
+  const vscode = requireVscode();
+  if (!vscode || !vscode.window.registerUriHandler) return;
+  context.subscriptions.push(vscode.window.registerUriHandler({
+    handleUri(uri) {
+      const parsed = parseToggleDeepLink(uri.path, uri.query);
+      if (!parsed) return;
+      // Serialise toggles so a double-click's second flip reads the first's
+      // result (both reading pre-edit text would flip the same way twice).
+      // A failed or no-op toggle leaves the preview's optimistic flip
+      // showing the wrong state until the next render - rare (stale
+      // data-line, rejected edit) and preferable to error toasts.
+      _pendingToggles = _pendingToggles
+        .then(() => toggleTaskMarkerAtLine(vscode, parsed.doc, parsed.line))
+        .catch(() => {});
+    },
+  }));
+}
+
+let _pendingToggles = Promise.resolve();
+
+// Pure parse of the toggle deep link. `query` is the percent-DECODED query
+// string as vscode.Uri delivers it (one decode, exactly undoing preview.js's
+// encodeURIComponent). Deliberately NOT URLSearchParams: that would decode a
+// second time (corrupting '%' in paths) and apply form-urlencoded semantics
+// ('+' becomes a space). The greedy `.*` keeps any '&'/'=' inside the doc
+// value intact because `line` is anchored last and digits-only - which also
+// rejects a missing or empty line instead of coercing it to 0.
+function parseToggleDeepLink(path, query) {
+  if (path !== '/toggle') return null;
+  const match = /^doc=(.+)&line=(\d+)$/.exec(query || '');
+  if (!match) return null;
+  return { doc: match[1], line: Number(match[2]) };
+}
+
+async function toggleTaskMarkerAtLine(vscode, docParam, line) {
+  // docParam is always a Uri.toString() (the preview's own `source` value).
+  const uri = vscode.Uri.parse(docParam);
+  if (!/\.(md|markdown)$/i.test(uri.path)) return;
+  // The deep link is machine-reachable by any local process; only touch
+  // documents the session already holds open (a rendered preview keeps its
+  // TextDocument open), never pull arbitrary files off disk.
+  const document = vscode.workspace.textDocuments.find(
+    (open) => open.uri.toString() === uri.toString()
+  );
+  if (!document || line >= document.lineCount) return;
+  // Validate the target line still holds a task marker - data-line comes
+  // from the last render and the document may have changed since.
+  const flipped = flipTaskMarker(document.lineAt(line).text);
+  if (!flipped) return;
+  const wasDirty = document.isDirty;
+  const versionBefore = document.version;
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri,
+    new vscode.Range(line, flipped.column, line, flipped.column + 1),
+    flipped.marker);
+  const applied = await vscode.workspace.applyEdit(edit);
+  // Save so the toggle isn't stranded as an invisible dirty buffer - but
+  // only when the document was clean AND ours is the sole edit since (a
+  // concurrent keystroke in the await gap must stay unsaved, the user's).
+  if (applied && !wasDirty && document.version === versionBefore + 1) {
+    await document.save();
+  }
+}
+
+// Pure marker flip: given a source line, returns { column, marker } for the
+// single-character replacement that toggles its task checkbox, or null when
+// the line isn't a task item. Leading '>' quoting is accepted - task lists
+// nested in blockquotes render as checkboxes too.
+function flipTaskMarker(text) {
+  const match = text.match(/^((?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[)( |x|X)(?=\])/);
+  if (!match) return null;
+  return {
+    column: match[1].length,
+    marker: match[2] === ' ' ? 'x' : ' ',
+  };
+}
+
 // Returns the canonical (realpath-resolved) absolute path, or null if the
 // path doesn't exist or isn't accessible. Used to deduplicate symlinked or
 // overlapping roots without crashing on missing extraIndexRoots entries.
@@ -899,6 +985,7 @@ function activate(context) {
       console.warn('markdown-preview-styles: index init failed', err)
     );
     initStaleRefresh(context);
+    initCheckboxToggle(context);
   }
   return {
     extendMarkdownIt(md) {
@@ -1421,6 +1508,8 @@ exports.expandTilde = expandTilde;
 exports.buildResolvedHref = buildResolvedHref;
 exports.safeHref = safeHref;
 exports.safeImgSrc = safeImgSrc;
+exports.flipTaskMarker = flipTaskMarker;
+exports.parseToggleDeepLink = parseToggleDeepLink;
 exports.markChangedDocument = markChangedDocument;
 exports.refreshStalePreviewOnTabActivation = refreshStalePreviewOnTabActivation;
 exports.refreshStalePreviewOnWindowFocus = refreshStalePreviewOnWindowFocus;

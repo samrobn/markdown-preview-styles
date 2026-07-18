@@ -3,6 +3,8 @@
 // markdown-it instance - no real markdown-it dependency.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const {
   activate,
   parseWikilinkTarget,
@@ -18,6 +20,8 @@ const {
   markChangedDocument,
   refreshStalePreviewOnTabActivation,
   refreshStalePreviewOnWindowFocus,
+  flipTaskMarker,
+  parseToggleDeepLink,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -1981,6 +1985,110 @@ testAsync('refreshStalePreviewOnTabActivation: also clears serviced unfocused ma
     changed, { changed: [previewTab('file:///a.md')] }, () => {}, unfocused);
   assert.strictEqual(changed.size, 0);
   assert.strictEqual(unfocused.size, 0, 'a serviced mark cannot re-fire on the next refocus');
+});
+
+// ---- flipTaskMarker (preview checkbox toggle) -------------------------------
+
+test('flipTaskMarker: unchecked bullet flips to x', () => {
+  assert.deepStrictEqual(flipTaskMarker('- [ ] Open task'), { column: 3, marker: 'x' });
+});
+
+test('flipTaskMarker: checked bullet flips to space', () => {
+  assert.deepStrictEqual(flipTaskMarker('- [x] Done'), { column: 3, marker: ' ' });
+});
+
+test('flipTaskMarker: uppercase X flips to space', () => {
+  assert.deepStrictEqual(flipTaskMarker('- [X] Done'), { column: 3, marker: ' ' });
+});
+
+test('flipTaskMarker: indented subtask keeps indent in the column', () => {
+  assert.deepStrictEqual(flipTaskMarker('  - [ ] Subtask'), { column: 5, marker: 'x' });
+});
+
+test('flipTaskMarker: star and plus bullets accepted', () => {
+  assert.deepStrictEqual(flipTaskMarker('* [ ] a'), { column: 3, marker: 'x' });
+  assert.deepStrictEqual(flipTaskMarker('+ [x] b'), { column: 3, marker: ' ' });
+});
+
+test('flipTaskMarker: ordered-list task items accepted', () => {
+  assert.deepStrictEqual(flipTaskMarker('1. [ ] step'), { column: 4, marker: 'x' });
+  assert.deepStrictEqual(flipTaskMarker('12) [x] step'), { column: 5, marker: ' ' });
+});
+
+test('flipTaskMarker: non-task lines return null', () => {
+  assert.strictEqual(flipTaskMarker('plain text'), null);
+  assert.strictEqual(flipTaskMarker('- ordinary bullet'), null);
+  assert.strictEqual(flipTaskMarker('- [] empty brackets'), null);
+  assert.strictEqual(flipTaskMarker('- [y] wrong marker'), null);
+  assert.strictEqual(flipTaskMarker('[ ] no list marker'), null);
+  assert.strictEqual(flipTaskMarker(''), null);
+});
+
+test('flipTaskMarker: column points at the marker character itself', () => {
+  const line = '  - [x] verify';
+  const flip = flipTaskMarker(line);
+  assert.strictEqual(line[flip.column], 'x');
+  const flipped = line.slice(0, flip.column) + flip.marker + line.slice(flip.column + 1);
+  assert.strictEqual(flipped, '  - [ ] verify');
+});
+
+test('flipTaskMarker: blockquote-nested task items accepted', () => {
+  assert.deepStrictEqual(flipTaskMarker('> - [ ] quoted'), { column: 5, marker: 'x' });
+  assert.deepStrictEqual(flipTaskMarker('> > - [x] deep'), { column: 7, marker: ' ' });
+});
+
+// ---- parseToggleDeepLink (deep-link query contract) -------------------------
+
+// The query arrives percent-decoded once (vscode.Uri semantics), exactly
+// undoing preview.js's encodeURIComponent. These tests pin the parse side of
+// the contract; the literal-href test below pins the producer side.
+test('parseToggleDeepLink: well-formed link parses', () => {
+  assert.deepStrictEqual(
+    parseToggleDeepLink('/toggle', 'doc=file:///notes/a.md&line=12'),
+    { doc: 'file:///notes/a.md', line: 12 });
+});
+
+test('parseToggleDeepLink: wrong path rejected', () => {
+  assert.strictEqual(parseToggleDeepLink('/other', 'doc=file:///a.md&line=1'), null);
+});
+
+test('parseToggleDeepLink: missing, empty, or non-numeric line rejected', () => {
+  assert.strictEqual(parseToggleDeepLink('/toggle', 'doc=file:///a.md'), null);
+  assert.strictEqual(parseToggleDeepLink('/toggle', 'doc=file:///a.md&line='), null);
+  assert.strictEqual(parseToggleDeepLink('/toggle', 'doc=file:///a.md&line=-1'), null);
+  assert.strictEqual(parseToggleDeepLink('/toggle', 'doc=file:///a.md&line=x'), null);
+  assert.strictEqual(parseToggleDeepLink('/toggle', ''), null);
+  assert.strictEqual(parseToggleDeepLink('/toggle', undefined), null);
+});
+
+test('parseToggleDeepLink: empty doc rejected', () => {
+  assert.strictEqual(parseToggleDeepLink('/toggle', 'doc=&line=3'), null);
+});
+
+test('parseToggleDeepLink: doc value keeps %, +, &, and = intact', () => {
+  // URLSearchParams would mangle every one of these - the regex must not.
+  const doc = 'file:///notes/100%25 done + c&d=e.md';
+  const parsed = parseToggleDeepLink('/toggle', `doc=${doc}&line=0`);
+  assert.deepStrictEqual(parsed, { doc, line: 0 });
+});
+
+test('toggle deep link: preview.js builds the exact shape extension.js parses', () => {
+  const previewSrc = fs.readFileSync(path.join(__dirname, '..', 'preview.js'), 'utf8');
+  // Producer-side pin: the href builder must target our authority and path
+  // with doc first and line last (the parser anchors on that order).
+  assert.ok(
+    previewSrc.includes("'vscode://local.markdown-preview-styles/toggle?doc=' +"),
+    'preview.js href builder drifted from the parsed contract');
+  assert.ok(
+    previewSrc.includes("'&line=' + encodeURIComponent(line)"),
+    'preview.js line param drifted from the parsed contract');
+  // Round trip: build a query the way preview.js does, decode once the way
+  // vscode.Uri does, and the parser must recover the original values.
+  const source = 'file:///Users/someone/my notes/100% done.md';
+  const line = 42;
+  const encodedQuery = 'doc=' + encodeURIComponent(source) + '&line=' + encodeURIComponent(line);
+  const parsed = parseToggleDeepLink('/toggle', decodeURIComponent(encodedQuery));
+  assert.deepStrictEqual(parsed, { doc: source, line });
 });
 
 // ---- Summary ----------------------------------------------------------------
