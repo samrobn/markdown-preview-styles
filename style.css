@@ -243,6 +243,15 @@ body :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, hr, table) {
   margin-bottom: 0;
 }
 
+/* Separate sibling list items so the item-to-item gap reads differently
+   from a wrapped line within one item (with margins zeroed above, both
+   collapse to bare line-height and multi-line items blur into their
+   neighbours). Uniform across depths and list types, task items included.
+   Gutter numbers move with their li, so alignment is unaffected. */
+body li + li {
+  margin-top: 0.4em;
+}
+
 /* Shrink inline code (backtick-quoted spans). Scoped to :not(pre) > code so
    fenced code blocks (inside <pre>) keep their normal size. */
 :not(pre) > code {
