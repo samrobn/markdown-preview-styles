@@ -24,7 +24,7 @@ Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`)
 
 ## Related VS Code settings
 
-The extension's defaults assume a few preview settings. Only `breaks` and `frontMatter` differ from VS Code's stock defaults; the others are noted for awareness:
+The extension's defaults assume a few preview settings. `breaks` and `frontMatter` are required changes from stock; the others are recommended pairings or defaults noted for awareness:
 
 - `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines. Without this, a single newline collapses into a space within the same paragraph.
 - `"markdown.preview.frontMatter": "hide"` - VS Code's stock default is `table`, its own frontmatter table. Anything but `hide` renders VS Code's version (table or code block) as well as the extension's Properties table, so the frontmatter shows twice.
