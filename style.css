@@ -35,6 +35,10 @@
   --mps-h4-size: 1.143rem; /* 16px */
   --mps-h5-size: 1rem;     /* 14px */
   --mps-h6-size: 0.857rem; /* 12px */
+  /* Gutter line numbers - Martian Mono at the gutter's existing weight
+     (300, matching the bundled build), falling back to the editor font. */
+  --mps-gutter-font: "Martian Mono",
+    var(--vscode-editor-font-family, ui-monospace, monospace);
 }
 
 body h1,
@@ -271,7 +275,7 @@ body pre.mps-pre-line::before {
   padding-right: 2em;
   text-align: right;
   color: var(--vscode-editorLineNumber-foreground, #858585);
-  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-family: var(--mps-gutter-font, ui-monospace, monospace);
   font-size: 0.8rem;
   font-weight: 300 !important;
   line-height: 1.6;
