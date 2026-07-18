@@ -500,10 +500,10 @@ const PAGE_ASSERTIONS = `(() => {
   // got reordered).
   const bodyFamily = getComputedStyle(document.body).fontFamily;
   results.push({
-    label: 'body font: iA Writer Quattro S loads and applies',
-    ok: document.fonts.check('1em "iA Writer Quattro S"') &&
-        bodyFamily.includes('iA Writer Quattro S'),
-    actual: 'loaded=' + document.fonts.check('1em "iA Writer Quattro S"') +
+    label: 'body font: iA Writer Quattro loads and applies',
+    ok: document.fonts.check('1em "iA Writer Quattro"') &&
+        bodyFamily.includes('iA Writer Quattro'),
+    actual: 'loaded=' + document.fonts.check('1em "iA Writer Quattro"') +
       ' family=' + bodyFamily.split(',')[0],
   });
 

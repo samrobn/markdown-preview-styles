@@ -4,9 +4,9 @@
    Headings get a monospace display treatment: Martian Mono Light
    (bundled - SIL OFL 1.1, see fonts/OFL-martian-mono.txt; the Std-width
    300-weight static build), light weight at display sizes, theme-default
-   colour. Body prose renders in iA Writer Quattro S (bundled - SIL OFL
-   1.1, see fonts/OFL-ia-writer-quattro.txt; all four text faces so bold
-   and italic are real, not synthesised). The body rule deliberately
+   colour. Body prose renders in iA Writer Quattro (bundled - SIL OFL
+   1.1, see fonts/OFL-ia-writer-quattro.txt; the variable cuts, upright
+   and italic, so bold interpolates on the wght axis). The body rule deliberately
    overrides VS Code's markdown.preview.fontFamily setting - same
    hardcoded-default decision as the headings. Tweak the custom
    properties below; the rules only consume them. */
@@ -21,33 +21,21 @@
   src: url("./fonts/MartianMono-StdLt.woff2") format("woff2");
 }
 
+/* Variable cuts (wght axis 400-700), so bold prose can sit anywhere in
+   between - the 700 static read too heavy against Quattro's regular. */
 @font-face {
-  font-family: "iA Writer Quattro S";
+  font-family: "iA Writer Quattro";
   font-style: normal;
-  font-weight: 400;
+  font-weight: 400 700;
   font-display: swap;
-  src: url("./fonts/iAWriterQuattroS-Regular.woff2") format("woff2");
+  src: url("./fonts/iAWriterQuattroV.woff2") format("woff2");
 }
 @font-face {
-  font-family: "iA Writer Quattro S";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("./fonts/iAWriterQuattroS-Bold.woff2") format("woff2");
-}
-@font-face {
-  font-family: "iA Writer Quattro S";
+  font-family: "iA Writer Quattro";
   font-style: italic;
-  font-weight: 400;
+  font-weight: 400 700;
   font-display: swap;
-  src: url("./fonts/iAWriterQuattroS-Italic.woff2") format("woff2");
-}
-@font-face {
-  font-family: "iA Writer Quattro S";
-  font-style: italic;
-  font-weight: 700;
-  font-display: swap;
-  src: url("./fonts/iAWriterQuattroS-BoldItalic.woff2") format("woff2");
+  src: url("./fonts/iAWriterQuattroV-Italic.woff2") format("woff2");
 }
 
 :root {
@@ -76,12 +64,20 @@
     var(--vscode-font-family, sans-serif);
   --mps-properties-size: 0.8em;
   /* Body prose. */
-  --mps-body-font: "iA Writer Quattro S", -apple-system,
+  --mps-body-font: "iA Writer Quattro", -apple-system,
     BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Bold prose weight - interpolated on the variable wght axis; the full
+     700 reads heavy against Quattro's regular. */
+  --mps-body-bold-weight: 560;
 }
 
 body {
   font-family: var(--mps-body-font);
+}
+
+body strong,
+body b {
+  font-weight: var(--mps-body-bold-weight);
 }
 
 body h1,
