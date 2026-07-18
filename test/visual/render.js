@@ -166,7 +166,19 @@ html {
   --vscode-editor-foreground: #cccccc;
   --vscode-textCodeBlock-background: rgba(255, 255, 255, 0.04);
   --vscode-widget-border: rgba(255, 255, 255, 0.07);
+  --vscode-textPreformat-foreground: #d0d0d0;
+  --vscode-textPreformat-background: #3c3c3c;
 }
+/* Mirror the webview host's DEFAULT stylesheet (browser/pre/index.html),
+   which loads before any extension CSS in every webview - it's what gives
+   inline code its chip. Dark Modern values for the two tokens above. */
+code {
+  color: var(--vscode-textPreformat-foreground);
+  background-color: var(--vscode-textPreformat-background);
+  padding: 1px 3px;
+  border-radius: 4px;
+}
+pre code { padding: 0; }
 body { line-height: var(--markdown-line-height, 22px); }
 ul, ol { padding-inline-start: 30px; }
 /* Mirror VS Code's markdown.css code-block chrome, which our style.css
