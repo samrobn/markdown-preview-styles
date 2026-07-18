@@ -768,18 +768,23 @@ async function rebuildWorkspaceIndex(context, vscode) {
 // preview, hence servicing all marks at once). False positives cost one
 // redundant refresh: hidden-tab edits (which self-heal upstream), and
 // metadata changes on an already-active marked tab (isActive is a snapshot,
-// not a transition). Known gap: group-visibility restores (maximising
-// another group, Zen Mode) fire no tab event and stay uncorrected. Classic
-// Open Preview panels (TabInputWebview, no uri exposed) are unhandled -
-// we don't use them.
+// not a transition). A second trigger services marks made while the window
+// was unfocused when it regains focus (see refreshStalePreviewOnWindowFocus).
+// Known gap: group-visibility restores (maximising another group, Zen Mode)
+// while the window stays focused fire no tab event and stay uncorrected.
+// Classic Open Preview panels (TabInputWebview, no uri exposed) are
+// unhandled - we don't use them.
 
 const PREVIEW_EDITOR_VIEW_TYPE = 'vscode.markdown.preview.editor';
 const _mdChangedSinceFullRender = new Set();
+const _mdChangedWhileUnfocused = new Set();
 
-function markChangedDocument(changedSet, event) {
+function markChangedDocument(changedSet, event, unfocusedSet, windowFocused) {
   if (event.document.languageId !== 'markdown') return;
   if (!event.contentChanges.length) return;
-  changedSet.add(event.document.uri.toString());
+  const uri = event.document.uri.toString();
+  changedSet.add(uri);
+  if (unfocusedSet && windowFocused === false) unfocusedSet.add(uri);
 }
 
 // Resolves true when a refresh was dispatched, false when no marked preview
@@ -787,22 +792,55 @@ function markChangedDocument(changedSet, event) {
 // failed refresh keeps them so the next activation retries - and only the
 // marks snapshotted at dispatch are removed, so a doc changing while the
 // refresh is in flight isn't wiped by a render that predates the change.
-async function refreshStalePreviewOnTabActivation(changedSet, event, refresh) {
+function isActiveMarkedPreviewTab(tab, markSet) {
+  if (!tab.isActive) return false;
+  const input = tab.input;
+  if (!input || input.viewType !== PREVIEW_EDITOR_VIEW_TYPE || !input.uri) return false;
+  return markSet.has(input.uri.toString());
+}
+
+async function refreshStalePreviewOnTabActivation(changedSet, event, refresh, unfocusedSet) {
   for (const tab of (event.changed || [])) {
-    if (!tab.isActive) continue;
-    const input = tab.input;
-    if (!input || input.viewType !== PREVIEW_EDITOR_VIEW_TYPE || !input.uri) continue;
-    if (!changedSet.has(input.uri.toString())) continue;
-    const serviced = [...changedSet];
-    try {
-      await refresh();
-    } catch (_) {
-      return true;
-    }
-    for (const uri of serviced) changedSet.delete(uri);
+    if (!isActiveMarkedPreviewTab(tab, changedSet)) continue;
+    await dispatchGlobalRefresh(changedSet, unfocusedSet, refresh);
     return true;
   }
   return false;
+}
+
+// Marks added while the window was unfocused cover the away-from-keyboard
+// hole: an external writer's edit takes the patch path while the preview tab
+// is visible and stays active, so the activation handler never sees a tab
+// event, and the stale baseline surfaces if the webview is destroyed and
+// restored while the user is away (leading hypothesis from a live
+// recurrence; the destroy-without-tab-event path is bundle-verified only
+// for group-visibility restores, not for plain OS focus loss). Refocusing
+// the window is the one event the user's return always produces. Marks made
+// while focused are deliberately NOT serviced here - the user's own edits
+// patch the live webview, and refreshing those on every refocus would
+// full-reload the preview on each cmd-tab back.
+async function refreshStalePreviewOnWindowFocus(changedSet, unfocusedSet, state, tabGroups, refresh) {
+  if (!state.focused || !unfocusedSet.size) return false;
+  for (const group of (tabGroups.all || [])) {
+    for (const tab of (group.tabs || [])) {
+      if (!isActiveMarkedPreviewTab(tab, unfocusedSet)) continue;
+      await dispatchGlobalRefresh(changedSet, unfocusedSet, refresh);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function dispatchGlobalRefresh(changedSet, unfocusedSet, refresh) {
+  const serviced = [...changedSet];
+  const servicedUnfocused = unfocusedSet ? [...unfocusedSet] : [];
+  try {
+    await refresh();
+  } catch (_) {
+    return;
+  }
+  for (const uri of serviced) changedSet.delete(uri);
+  if (unfocusedSet) for (const uri of servicedUnfocused) unfocusedSet.delete(uri);
 }
 
 function initStaleRefresh(context) {
@@ -814,16 +852,29 @@ function initStaleRefresh(context) {
   }
   if (!vscode.window.tabGroups) return; // tabs API absent in older builds
 
+  const refresh = () => vscode.commands.executeCommand('markdown.preview.refresh');
+  // window.state is a live getter - read per event rather than mirrored into
+  // a closure, so there's no init-gap or ordering staleness to reason about.
+  const windowFocused = () => vscode.window.state ? vscode.window.state.focused : true;
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument(event =>
-      markChangedDocument(_mdChangedSinceFullRender, event)
+      markChangedDocument(_mdChangedSinceFullRender, event,
+        _mdChangedWhileUnfocused, windowFocused())
     ),
     vscode.window.tabGroups.onDidChangeTabs(event =>
-      refreshStalePreviewOnTabActivation(_mdChangedSinceFullRender, event, () =>
-        vscode.commands.executeCommand('markdown.preview.refresh')
-      )
+      refreshStalePreviewOnTabActivation(_mdChangedSinceFullRender, event, refresh,
+        _mdChangedWhileUnfocused)
     )
   );
+  if (vscode.window.onDidChangeWindowState) {
+    context.subscriptions.push(
+      vscode.window.onDidChangeWindowState(state =>
+        refreshStalePreviewOnWindowFocus(_mdChangedSinceFullRender,
+          _mdChangedWhileUnfocused, state, vscode.window.tabGroups, refresh)
+      )
+    );
+  }
 }
 
 // Returns the canonical (realpath-resolved) absolute path, or null if the
@@ -1370,6 +1421,7 @@ exports.safeHref = safeHref;
 exports.safeImgSrc = safeImgSrc;
 exports.markChangedDocument = markChangedDocument;
 exports.refreshStalePreviewOnTabActivation = refreshStalePreviewOnTabActivation;
+exports.refreshStalePreviewOnWindowFocus = refreshStalePreviewOnWindowFocus;
 exports.__setWikiStateForTest = __setWikiStateForTest;
 exports.__resetWikiStateForTest = __resetWikiStateForTest;
 // Exported for the concurrency test (rebuild generation guard). Takes the

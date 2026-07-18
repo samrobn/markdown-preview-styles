@@ -17,6 +17,7 @@ const {
   safeImgSrc,
   markChangedDocument,
   refreshStalePreviewOnTabActivation,
+  refreshStalePreviewOnWindowFocus,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -1867,6 +1868,119 @@ testAsync('refreshStalePreviewOnTabActivation: a mark added mid-refresh survives
     async () => { changed.add('file:///b.md'); });
   assert.ok(!changed.has('file:///a.md'), 'serviced mark cleared');
   assert.ok(changed.has('file:///b.md'), 'in-flight mark kept - its render may predate the change');
+});
+
+// ---- Stale-preview window-focus refresh -------------------------------------
+// Marks added while the window is unfocused (an external writer editing while
+// the user is away) are serviced when the window regains focus - the webview
+// can be destroyed and restored without any tab event while away, so the
+// tab-activation path alone never fires.
+
+function tabGroupsOf(...tabs) {
+  return { all: [{ tabs }] };
+}
+
+test('markChangedDocument: window unfocused adds the mark to the unfocused set too', () => {
+  const changed = new Set();
+  const unfocused = new Set();
+  markChangedDocument(changed, mdChangeEvent('file:///a.md'), unfocused, false);
+  assert.ok(changed.has('file:///a.md'));
+  assert.ok(unfocused.has('file:///a.md'));
+});
+
+test('markChangedDocument: window focused leaves the unfocused set empty', () => {
+  const changed = new Set();
+  const unfocused = new Set();
+  markChangedDocument(changed, mdChangeEvent('file:///a.md'), unfocused, true);
+  assert.ok(changed.has('file:///a.md'));
+  assert.strictEqual(unfocused.size, 0);
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: refocus refreshes and clears both sets for an active marked-unfocused preview tab', async () => {
+  const changed = new Set(['file:///a.md', 'file:///b.md']);
+  const unfocused = new Set(['file:///a.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: true },
+    tabGroupsOf(previewTab('file:///a.md')), () => { refreshes++; });
+  assert.strictEqual(fired, true);
+  assert.strictEqual(refreshes, 1);
+  // The refresh is global, so all marks present at dispatch clear.
+  assert.strictEqual(changed.size, 0);
+  assert.strictEqual(unfocused.size, 0);
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: no refresh when only focused-time marks exist', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set();
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: true },
+    tabGroupsOf(previewTab('file:///a.md')), () => { refreshes++; });
+  assert.strictEqual(fired, false);
+  assert.strictEqual(refreshes, 0);
+  assert.ok(changed.has('file:///a.md'), 'focused-time mark left for tab activation');
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: no refresh on losing focus', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set(['file:///a.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: false },
+    tabGroupsOf(previewTab('file:///a.md')), () => { refreshes++; });
+  assert.strictEqual(fired, false);
+  assert.strictEqual(refreshes, 0);
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: no refresh when the marked tab is inactive or not a preview', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set(['file:///a.md']);
+  let refreshes = 0;
+  const fired = await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: true },
+    tabGroupsOf(
+      previewTab('file:///a.md', { isActive: false }),
+      previewTab('file:///a.md', { viewType: 'vscode.markdown.editor' }),
+      previewTab(null),
+      previewTab('file:///a.md', { noInput: true })),
+    () => { refreshes++; });
+  assert.strictEqual(fired, false);
+  assert.strictEqual(refreshes, 0);
+  assert.ok(unfocused.has('file:///a.md'), 'mark kept for a later activation or refocus');
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: a failed refresh keeps marks so the next refocus retries', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set(['file:///a.md']);
+  const fired = await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: true },
+    tabGroupsOf(previewTab('file:///a.md')),
+    () => Promise.reject(new Error('command unavailable')));
+  assert.strictEqual(fired, true);
+  assert.ok(changed.has('file:///a.md'), 'mark survives a failed refresh');
+  assert.ok(unfocused.has('file:///a.md'), 'unfocused mark survives a failed refresh');
+});
+
+testAsync('refreshStalePreviewOnWindowFocus: a mark added mid-refresh survives the clear', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set(['file:///a.md']);
+  await refreshStalePreviewOnWindowFocus(
+    changed, unfocused, { focused: true },
+    tabGroupsOf(previewTab('file:///a.md')),
+    async () => { changed.add('file:///b.md'); unfocused.add('file:///b.md'); });
+  assert.ok(!changed.has('file:///a.md'), 'serviced mark cleared');
+  assert.ok(changed.has('file:///b.md'), 'in-flight mark kept');
+  assert.ok(unfocused.has('file:///b.md'), 'in-flight unfocused mark kept');
+});
+
+testAsync('refreshStalePreviewOnTabActivation: also clears serviced unfocused marks', async () => {
+  const changed = new Set(['file:///a.md']);
+  const unfocused = new Set(['file:///a.md']);
+  await refreshStalePreviewOnTabActivation(
+    changed, { changed: [previewTab('file:///a.md')] }, () => {}, unfocused);
+  assert.strictEqual(changed.size, 0);
+  assert.strictEqual(unfocused.size, 0, 'a serviced mark cannot re-fire on the next refocus');
 });
 
 // ---- Summary ----------------------------------------------------------------
