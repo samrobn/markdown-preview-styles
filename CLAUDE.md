@@ -121,6 +121,14 @@ For runtime values inside `preview.js` (where neither `fs` nor toasts work), per
 
 VS Code's renderer process isn't launched with `--remote-debugging-port`, so `agent-browser connect` has nothing to attach to. For headless DOM/computed-style inspection use `test/visual/` (it runs real markdown-it + our plugin + the verbatim `pluginSourceMap`); for the live preview, either open Webview DevTools via the Command Palette, or temporarily wrap `md.renderer.render` to write the rendered HTML to disk. Computer-use can drive VS Code's UI (tier "click") for forced reloads.
 
+**Exception - a scratch-profile instance CAN expose CDP** (tested 2026-07-18, vscode 1.129.1). A second VS Code launched with its own `--user-data-dir` plus `--remote-debugging-port` serves the workbench window as a `page` CDP target and every preview webview as its own `iframe` target (`vscode-webview://...`). Attach agent-browser to the port for workbench-level driving and screenshots; for inside the preview, open a raw websocket to the iframe target's `webSocketDebuggerUrl` (plain Node - global `WebSocket` + `fetch`, no deps) and `Runtime.evaluate`. The iframe target is the *outer webview host*, whose own document is empty - reach the rendered content through the same-origin inner iframe's `contentDocument`.
+
+Hygiene for that scratch instance - both learned by disturbing the developer's live VS Code windows:
+
+- **Launch via the app binary, never the `code` CLI**: `"/Applications/Visual Studio Code.app/Contents/MacOS/Electron" --user-data-dir <scratch> --remote-debugging-port=9222 ... &` backgrounded. The CLI goes through the running installation (launch/kill cycles via `code` visibly disturbed the developer's own windows; exact mechanism unpinned) and gives no PID; the direct launch is isolated and yields one via `$!`.
+- **Shut down by that exact PID, or gracefully over CDP - never `pkill -f <pattern>`**: a pattern kill reached beyond the scratch instance and took out real windows.
+- Scratch-profile settings that stop dialogs occluding the workbench: `security.workspace.trust.enabled: false`, `workbench.startupEditor: none`, and `--disable-extension GitHub.copilot --disable-extension GitHub.copilot-chat` (fresh profiles pop a Copilot sign-in dialog over everything).
+
 ### `em` on `::before` resolves against the pseudo's own font-size
 
 `::before` carries `font-size: 0.8rem` so `1em` in its `left` / `width` / `padding-right` is `0.8rem`, NOT the parent's 1em. Easy to miscalculate when triangulating gutter offsets from pixel measurements - convert through the 0.8 × root_font_size factor.
