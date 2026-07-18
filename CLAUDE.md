@@ -128,6 +128,7 @@ Hygiene for that scratch instance - both learned by disturbing the developer's l
 - **Launch via the app binary, never the `code` CLI**: `"/Applications/Visual Studio Code.app/Contents/MacOS/Electron" --user-data-dir <scratch> --remote-debugging-port=9222 ... &` backgrounded. The CLI goes through the running installation (launch/kill cycles via `code` visibly disturbed the developer's own windows; exact mechanism unpinned) and gives no PID; the direct launch is isolated and yields one via `$!`.
 - **Shut down by that exact PID, or gracefully over CDP - never `pkill -f <pattern>`**: a pattern kill reached beyond the scratch instance and took out real windows.
 - Scratch-profile settings that stop dialogs occluding the workbench: `security.workspace.trust.enabled: false`, `workbench.startupEditor: none`, and `--disable-extension GitHub.copilot --disable-extension GitHub.copilot-chat` (fresh profiles pop a Copilot sign-in dialog over everything).
+- Testing a `vscode://` UriHandler from a scratch profile: pre-trust it by seeding `extensionUrlHandler.confirmedExtensions` (JSON array of extension ids) into the profile's `User/globalStorage/state.vscdb` ItemTable before launch. The first-use "Allow ... to open this URI?" dialog otherwise blocks automation - and its remember-toggle isn't a native input, so eval-clicking it is unreliable (accepting without remembering just re-prompts next launch).
 
 ### `em` on `::before` resolves against the pseudo's own font-size
 
