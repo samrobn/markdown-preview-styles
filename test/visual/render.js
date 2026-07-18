@@ -102,12 +102,7 @@ function render(srcPath) {
   md.use(pluginFenceHljsClass);
   const src = fs.readFileSync(srcPath, 'utf8');
   const body = md.render(src);
-  // style.css is inlined into out.html (test/visual/), which moves the base
-  // URL two levels down from the repo root - so the @font-face's relative
-  // "./fonts/..." would 404 here while working live (VS Code resolves it
-  // against the stylesheet's own webview URI). Re-point it at the repo root.
-  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')
-    .replace(/url\("\.\/fonts\//g, 'url("../../fonts/');
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
   const previewJs = fs.readFileSync(path.join(ROOT, 'preview.js'), 'utf8');
   // Approximate VS Code preview defaults: dark background. style.css's own
   // body `padding-left: 5em` (applied above) gives the gutter ::before its
@@ -120,7 +115,16 @@ function render(srcPath) {
   // false positive on the wide-content breakout, which only matches the
   // wrapper's children.
   const html = `<!doctype html>
-<html><head><meta charset="utf-8"><style>
+<html><head><meta charset="utf-8">
+<!-- out.html lives in test/visual/, two levels below the repo root that
+     style.css's relative url()s (bundled fonts, attachments/ retries)
+     resolve against live (VS Code uses the stylesheet's own webview URI).
+     A base href re-roots EVERY relative URL in the inlined CSS and the
+     rendered body - robust against any future quote style or path shape,
+     unlike the regex rewrite it replaced. example.md's deliberately-
+     missing images still 404 (they exist nowhere under the root). -->
+<base href="../../">
+<style>
 /* This chrome-mirror block deliberately precedes the style.css block:
    live, the webview defaults + markdown.css load BEFORE contributed
    previewStyles, so our stylesheet's same-specificity overrides (e.g.
@@ -476,19 +480,26 @@ const PAGE_ASSERTIONS = `(() => {
   if (h1 && h2) {
     const h1Style = getComputedStyle(h1);
     const h1Px = parseFloat(h1Style.fontSize);
-    const h2Px = parseFloat(getComputedStyle(h2).fontSize);
+    // Check family/weight on h2 as well as h1: the sizes come from
+    // per-level rules, so a regression narrowing the grouped h1-h6
+    // font-family/weight rule to h1 alone would otherwise pass on
+    // h2's size while h2 silently fell back to the body font.
+    const h2Style = getComputedStyle(h2);
+    const h2Px = parseFloat(h2Style.fontSize);
     results.push({
       label: 'heading font: Martian Mono loads and applies',
       ok: document.fonts.check('300 1em "Martian Mono"') &&
           h1Style.fontFamily.includes('Martian Mono') &&
           h1Style.fontWeight === '300' &&
+          h2Style.fontFamily.includes('Martian Mono') &&
+          h2Style.fontWeight === '300' &&
           h1Px > 39 && h1Px < 41 &&
           h2Px > 23 && h2Px < 25 &&
           h1Style.color === getComputedStyle(document.body).color,
       actual: 'loaded=' + document.fonts.check('300 1em "Martian Mono"') +
-        ' family=' + h1Style.fontFamily.split(',')[0] +
-        ' weight=' + h1Style.fontWeight + ' h1=' + h1Style.fontSize +
-        ' h2=' + h2Px + 'px color=' + h1Style.color,
+        ' family=' + h1Style.fontFamily.split(',')[0] + '/' + h2Style.fontFamily.split(',')[0] +
+        ' weight=' + h1Style.fontWeight + '/' + h2Style.fontWeight +
+        ' h1=' + h1Style.fontSize + ' h2=' + h2Px + 'px color=' + h1Style.color,
     });
   } else {
     results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1/h2 in .markdown-body' });

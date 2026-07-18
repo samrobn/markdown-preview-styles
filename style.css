@@ -54,9 +54,10 @@
   --mps-h4-size: 1.143rem; /* 16px */
   --mps-h5-size: 1rem;     /* 14px */
   --mps-h6-size: 0.857rem; /* 12px */
-  /* Gutter line numbers - Martian Mono at the gutter's existing weight
+  /* Monospace utility font - gutter line numbers and the broken-image
+     placeholder label. Martian Mono at those rules' existing weight
      (300, matching the bundled build), falling back to the editor font. */
-  --mps-gutter-font: "Martian Mono",
+  --mps-mono-font: "Martian Mono",
     var(--vscode-editor-font-family, ui-monospace, monospace);
   /* Frontmatter Properties table (title, labels, values, pills).
      Sized down a step - Martian Mono renders wide for its em box. */
@@ -314,7 +315,7 @@ body pre.mps-pre-line::before {
   padding-right: 2em;
   text-align: right;
   color: var(--vscode-editorLineNumber-foreground, #858585);
-  font-family: var(--mps-gutter-font, ui-monospace, monospace);
+  font-family: var(--mps-mono-font);
   font-size: 0.8rem;
   font-weight: 300 !important;
   line-height: 1.6;
@@ -634,8 +635,8 @@ body table:not(.mps-properties-table) tbody tr {
 
 .mps-properties {
   margin: 0 0 2em 0;
-  font-family: var(--mps-properties-font, sans-serif);
-  font-size: var(--mps-properties-size, 0.92em);
+  font-family: var(--mps-properties-font);
+  font-size: var(--mps-properties-size);
   padding-bottom: 1em;
 }
 
@@ -778,24 +779,31 @@ body .mps-embed-image.mps-broken {
   opacity: 0.7;
   color: var(--vscode-descriptionForeground, inherit);
   font-size: 0.85em;
-  font-family: "Martian Mono", var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-family: var(--mps-mono-font);
   --mps-image-off-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='2' y1='2' x2='22' y2='22'/><path d='M10.41 10.41a2 2 0 1 1-2.83-2.83'/><line x1='13.5' y1='13.5' x2='6' y2='21'/><line x1='18' y1='12' x2='21' y2='15'/><path d='M3.59 3.59A1.99 1.99 0 0 0 3 5v14a2 2 0 0 0 2 2h14c.55 0 1.052-.22 1.41-.59'/><path d='M21 15V5a2 2 0 0 0-2-2H9'/></svg>");
 }
 
-body .mps-embed-image.mps-broken::before {
+/* Shared masked-icon base for the two placeholder pseudos (broken image
+   here, degraded embed's paperclip below) - icon, margin, and opacity
+   stay in the per-rule arms. */
+body .mps-embed-image.mps-broken::before,
+body .mps-embed-fallback::before {
   content: '';
   display: inline-block;
   vertical-align: -0.15em;
   width: 1em;
   height: 1em;
-  margin-right: 0.5em;
   background-color: currentColor;
-  -webkit-mask-image: var(--mps-image-off-icon);
-  mask-image: var(--mps-image-off-icon);
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-size: contain;
   mask-size: contain;
+}
+
+body .mps-embed-image.mps-broken::before {
+  margin-right: 0.5em;
+  -webkit-mask-image: var(--mps-image-off-icon);
+  mask-image: var(--mps-image-off-icon);
 }
 
 body .mps-embed-image.mps-broken::after {
@@ -812,19 +820,9 @@ body .mps-embed-fallback {
 }
 
 body .mps-embed-fallback::before {
-  content: '';
-  display: inline-block;
-  vertical-align: -0.15em;
-  width: 1em;
-  height: 1em;
   margin-right: 0.25em;
-  background-color: currentColor;
   -webkit-mask-image: var(--mps-paperclip-icon);
   mask-image: var(--mps-paperclip-icon);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-size: contain;
   opacity: 0.7;
 }
 
