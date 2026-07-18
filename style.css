@@ -39,9 +39,11 @@
      (300, matching the bundled build), falling back to the editor font. */
   --mps-gutter-font: "Martian Mono",
     var(--vscode-editor-font-family, ui-monospace, monospace);
-  /* Frontmatter Properties table (title, labels, values, pills). */
+  /* Frontmatter Properties table (title, labels, values, pills).
+     Sized down a step - Martian Mono renders wide for its em box. */
   --mps-properties-font: "Martian Mono",
     var(--vscode-font-family, sans-serif);
+  --mps-properties-size: 0.85em;
 }
 
 body h1,
@@ -599,7 +601,7 @@ body table:not(.mps-properties-table) tbody tr {
 .mps-properties {
   margin: 0 0 2em 0;
   font-family: var(--mps-properties-font, sans-serif);
-  font-size: 0.92em;
+  font-size: var(--mps-properties-size, 0.92em);
   padding-bottom: 1em;
 }
 
