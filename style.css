@@ -334,19 +334,23 @@ body pre.mps-pre-line::before {
    margin-left: -20px - the anchor takes over the gutter pull so its hit
    region follows the visual box, and the input override (higher
    specificity than MAIO's single-class rule) pins the input inside it.
-   inline-block + tight radius keep the click/focus highlight hugging the
-   box rather than sprawling along the line. */
+   The focus/click outline draws on the ANCHOR box, so the anchor must
+   shrink-wrap the checkbox exactly: the input's UA margins (3px) and
+   vertical-align move onto the anchor, and the block display kills the
+   inline baseline slack - measured live, anchor == input == 13x13 with
+   the box's painted position unchanged. */
 a.mps-task-toggle {
-  margin-left: -20px;
+  margin: 3px 3px 3px -20px;
+  vertical-align: middle;
   text-decoration: none;
   cursor: pointer;
   display: inline-block;
-  line-height: 1;
   border-radius: 3px;
 }
 a.mps-task-toggle > input.task-list-item-checkbox {
   pointer-events: none;
-  margin-left: 0;
+  margin: 0;
+  display: block;
 }
 
 /* Nested list compensation. extension.js emits `data-mps-list-depth` on
