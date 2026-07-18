@@ -352,6 +352,12 @@ a.mps-task-toggle > input.task-list-item-checkbox {
   margin: 0;
   display: block;
 }
+/* markdown.css rings every a:focus (not :focus-visible), so a mouse click
+   leaves a ring on the box until focus moves. Keyboard focus keeps the
+   (now box-hugging) ring; pointer focus goes ringless. */
+a.mps-task-toggle:focus:not(:focus-visible) {
+  outline: none;
+}
 
 /* Nested list compensation. extension.js emits `data-mps-list-depth` on
    ul/ol/li tokens (= number of ul/ol ancestors). Each level pushes the
