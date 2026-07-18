@@ -24,9 +24,10 @@ Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`)
 
 ## Related VS Code settings
 
-The extension's defaults assume a few preview settings. Only `breaks` differs from VS Code's stock defaults; the others are noted for awareness:
+The extension's defaults assume a few preview settings. Only `breaks` and `frontMatter` differ from VS Code's stock defaults; the others are noted for awareness:
 
 - `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines. Without this, a single newline collapses into a space within the same paragraph.
+- `"markdown.preview.frontMatter": "hide"` - VS Code's stock default is `table`, its own frontmatter table. Anything but `hide` renders VS Code's version (table or code block) as well as the extension's Properties table, so the frontmatter shows twice.
 - `"markdown.preview.lineHeight": 1.7` - the reference pairing for the bundled body face (iA Writer Quattro reads best a touch looser than the 1.6 stock default). Note `.mps-blank-line` is calibrated to `1.06lh` against 1.6; values further from that shift the gutter rhythm.
 - `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `rem`/`em`-based type and spacing in `style.css` scale with whatever you set here.
 - `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
