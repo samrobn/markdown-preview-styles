@@ -117,6 +117,8 @@ In this VS Code build, `console.log` does not appear in the `Log (Extension Host
 
 For runtime values inside `preview.js` (where neither `fs` nor toasts work), persist them to `data-mps-debug-*` attributes on the element you're inspecting. Then Command Palette → **Developer: Open Webview Developer Tools** → Elements panel → `Cmd+F` to find the element → hover over the attribute to see its full value. Works without any console access and survives across re-renders.
 
+For interactive debugging with the user watching the preview, a fixed-position on-screen badge div showing the current pipeline stage beats attribute breadcrumbs - readable straight off a screenshot, no DevTools round trip.
+
 ### The webview doesn't expose CDP
 
 VS Code's renderer process isn't launched with `--remote-debugging-port`, so `agent-browser connect` has nothing to attach to. For headless DOM/computed-style inspection use `test/visual/` (it runs real markdown-it + our plugin + the verbatim `pluginSourceMap`); for the live preview, either open Webview DevTools via the Command Palette, or temporarily wrap `md.renderer.render` to write the rendered HTML to disk. Computer-use can drive VS Code's UI (tier "click") for forced reloads.
