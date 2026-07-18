@@ -117,6 +117,27 @@ body { padding-right: 26px; }
    dropped live - set it unitless so the harness exercises what VS Code
    actually serves. */
 html { --markdown-line-height: 1.6; }
+/* Mirror the theme variables the live webview injects (Dark Modern values).
+   Without them every var(--vscode-*) in style.css silently takes its
+   fallback - links and wiki-links flattened to body-text grey in out.html
+   while rendering blue live, which misreports colour fidelity. Keep this
+   list in sync with the --vscode-* vars style.css consumes. */
+html {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: rgba(204, 204, 204, 0.7);
+  --vscode-textLink-foreground: #4daafc;
+  --vscode-badge-background: #616161;
+  --vscode-badge-foreground: #f8f8f8;
+  --vscode-charts-green: #89d185;
+  --vscode-editorLineNumber-foreground: #858585;
+  --vscode-editorLineNumber-activeForeground: #c6c6c6;
+  --vscode-editorWidget-background: #202020;
+  --vscode-editorWidget-border: #454545;
+  --vscode-errorForeground: #f48771;
+  --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  --vscode-editor-font-family: Menlo, Monaco, "Courier New", monospace;
+}
 body { line-height: var(--markdown-line-height, 22px); }
 ul, ol { padding-inline-start: 30px; }
 /* Mirror VS Code's markdown.css, which our style.css deliberately leaves to
