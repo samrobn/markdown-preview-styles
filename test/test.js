@@ -24,6 +24,7 @@ const {
   parseToggleDeepLink,
   guardClickSnapOnMouseSelection,
   restoreClickSnapOnVisibleRangesChange,
+  relocateDiffMarkers,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -67,8 +68,18 @@ function makeMd() {
   const inlineRules = [
     { name: 'link', fn: () => false },
   ];
+  // Pre-seed `block` (a no-op here) so `core.ruler.before('block', ...)`
+  // finds its target, same rationale as the `link` seed above.
+  coreRules.push({ name: 'block', fn: () => {} });
   return {
-    core: { ruler: { push(name, fn) { coreRules.push({ name, fn }); } } },
+    core: { ruler: {
+      push(name, fn) { coreRules.push({ name, fn }); },
+      before(beforeName, name, fn) {
+        const i = coreRules.findIndex(r => r.name === beforeName);
+        if (i < 0) throw new Error('Parser rule not found: ' + beforeName);
+        coreRules.splice(i, 0, { name, fn });
+      }
+    } },
     inline: {
       ruler: {
         before(beforeName, name, fn) {
@@ -163,6 +174,54 @@ test('renders a Properties table when frontmatter is present', () => {
   assert.match(html, /class="mps-properties"/);
   assert.match(html, /status/);
   assert.match(html, /draft/);
+});
+
+test('rendered-diff marker spans are stripped from frontmatter values', () => {
+  // VS Code's rendered diff splices <span data-diff-start/end> markers into
+  // the source around changed regions; escaped verbatim they corrupt the
+  // Properties table (and mid-value they break array/wikilink parsing).
+  const html = renderHtml('---\nstatus: <span data-diff-start="0"></span>in-progress<span data-diff-end="0"></span>\ntags: [a<span data-diff-start="1"></span>, b<span data-diff-end="1"></span>]\n---');
+  assert.match(html, /in-progress/);
+  assert.match(html, /\ba\b/);
+  assert.match(html, /\bb\b/);
+  assert.doesNotMatch(html, /data-diff/);
+});
+
+test('marker before the frontmatter fence still yields a Properties table', () => {
+  const html = renderHtml('<span data-diff-start="0"></span>---\nstatus: draft\n---');
+  assert.match(html, /class="mps-properties"/);
+  assert.match(html, /draft/);
+  assert.doesNotMatch(html, /data-diff/);
+});
+
+test('relocateDiffMarkers: leading marker moves past a list bullet', () => {
+  assert.strictEqual(
+    relocateDiffMarkers('<span data-diff-start="0"></span>- **bold** item'),
+    '- <span data-diff-start="0"></span>**bold** item');
+});
+
+test('relocateDiffMarkers: indented item keeps its indent', () => {
+  assert.strictEqual(
+    relocateDiffMarkers('  <span data-diff-end="3"></span>- nested'),
+    '  - <span data-diff-end="3"></span>nested');
+});
+
+test('relocateDiffMarkers: ordered list, heading, blockquote', () => {
+  assert.strictEqual(relocateDiffMarkers('<span data-diff-start="1"></span>2. item'),
+    '2. <span data-diff-start="1"></span>item');
+  assert.strictEqual(relocateDiffMarkers('<span data-diff-start="1"></span># Title'),
+    '# <span data-diff-start="1"></span>Title');
+  assert.strictEqual(relocateDiffMarkers('<span data-diff-start="1"></span>> quote'),
+    '> <span data-diff-start="1"></span>quote');
+});
+
+test('relocateDiffMarkers: consecutive markers move together; mid-line and plain text untouched', () => {
+  assert.strictEqual(
+    relocateDiffMarkers('<span data-diff-start="0"></span><span data-diff-end="1"></span>- x'),
+    '- <span data-diff-start="0"></span><span data-diff-end="1"></span>x');
+  const midLine = 'status: <span data-diff-start="0"></span>draft<span data-diff-end="0"></span>';
+  assert.strictEqual(relocateDiffMarkers(midLine), midLine);
+  assert.strictEqual(relocateDiffMarkers('- plain item\n# heading'), '- plain item\n# heading');
 });
 
 test('renders nothing when no frontmatter', () => {

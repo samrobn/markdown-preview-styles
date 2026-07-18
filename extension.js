@@ -597,6 +597,21 @@ function renderValue(value, type, docPath) {
 // wikilinks resolve to a document-relative href like body wikilinks do; it's
 // undefined when called without a render env (the inner pieces fall back to
 // the vscode://file form, which still navigates).
+// VS Code's rendered diff splices these empty marker spans into the
+// markdown source around changed regions. Shared by the relocation rule
+// below and the frontmatter strip in mps_frontmatter.
+const DIFF_MARKER_SPAN_SRC = '<span data-diff-(?:start|end)="\\d+"><\\/span>';
+
+// Move rendered-diff marker spans spliced at the start of a line past any
+// block syntax (list bullet, ordered-list number, heading hashes,
+// blockquote angle) so the construct still parses as a block. Mid-line
+// markers are left alone - inline HTML is harmless there.
+const RELOCATE_DIFF_MARKERS_RE = new RegExp(
+  '^([ \\t]*)((?:' + DIFF_MARKER_SPAN_SRC + ')+)([-*+][ \\t]|\\d+[.)][ \\t]|#{1,6}[ \\t]|>[ \\t]?)', 'gm');
+function relocateDiffMarkers(src) {
+  return src.replace(RELOCATE_DIFF_MARKERS_RE, '$1$3$2');
+}
+
 function renderProperties(data, docPath) {
   const entries = Object.entries(data);
   if (entries.length === 0) return '';
@@ -1085,6 +1100,18 @@ function activate(context) {
   }
   return {
     extendMarkdownIt(md) {
+      // VS Code's rendered diff (side-by-side preview panes for an SCM
+      // diff) splices empty <span data-diff-start/end="N"> marker spans
+      // into the markdown source around changed regions. A marker at the
+      // start of a changed line demotes block syntax - `- item` becomes
+      // `<span ...></span>- item`, which parses as a lazy continuation of
+      // the previous list item, fusing the two. Relocate leading markers
+      // past the block syntax before block parsing so structure survives;
+      // the spans still render inline, so diff highlighting keeps working.
+      md.core.ruler.before('block', 'mps_diff_markers', function (state) {
+        state.src = relocateDiffMarkers(state.src);
+      });
+
       // ![[path]] and ![[path|N]] - Obsidian-style image embeds.
       // Registered before `link` (markdown-it's built-in inline link rule)
       // so we get a shot at `![[...]]` before markdown-it tries to read
@@ -1574,7 +1601,18 @@ function activate(context) {
       });
 
       md.core.ruler.push('mps_frontmatter', function (state) {
-        const src = (state.src || '').replace(/^﻿/, '').replace(/^\s+/, '');
+        // Rendered-diff marker spans are stripped before the fence match,
+        // not just from values: a marker spliced before the `---` fence
+        // line would otherwise defeat FRONTMATTER_RE and the whole
+        // frontmatter falls through as body. In the table they'd render
+        // as escaped literal text, and mid-value they break array and
+        // wikilink parsing. Trade-off: changed frontmatter values lose
+        // intra-table diff highlighting (the spans are the highlight
+        // anchors); re-injecting them post-escape is the upgrade path if
+        // that ever matters.
+        const src = (state.src || '')
+          .replace(new RegExp(DIFF_MARKER_SPAN_SRC, 'g'), '')
+          .replace(/^﻿/, '').replace(/^\s+/, '');
         const match = src.match(FRONTMATTER_RE);
         if (!match) return;
         let html;
@@ -1606,6 +1644,7 @@ exports.safeHref = safeHref;
 exports.safeImgSrc = safeImgSrc;
 exports.flipTaskMarker = flipTaskMarker;
 exports.parseToggleDeepLink = parseToggleDeepLink;
+exports.relocateDiffMarkers = relocateDiffMarkers;
 exports.markChangedDocument = markChangedDocument;
 exports.refreshStalePreviewOnTabActivation = refreshStalePreviewOnTabActivation;
 exports.refreshStalePreviewOnWindowFocus = refreshStalePreviewOnWindowFocus;
