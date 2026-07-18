@@ -9,17 +9,11 @@ Two things it does:
 1. Injects custom CSS into every preview (`markdown.previewStyles`).
 2. Prepends an Obsidian-style **Properties** table above any markdown file with YAML frontmatter, plus a source-line gutter and other tweaks (`markdown.markdownItPlugins`).
 
-![Preview of example.md with the extension active](docs/preview.png)
+![Preview of example.md with the extension active](https://raw.githubusercontent.com/samrobn/markdown-preview-styles/main/docs/preview.png)
 
 ## Install / re-install
 
-The extension is symlinked into VS Code's extensions directory. The folder name must match `<publisher>.<name>-<version>` from `package.json`:
-
-```
-~/.vscode/extensions/local.markdown-preview-styles-0.2.0  →  ~/Dev/vscode-extensions/markdown-preview-styles
-```
-
-If the symlink is missing (new machine, accidental deletion, or after a version bump):
+The extension is symlinked into VS Code's extensions directory - the folder name must match `<publisher>.<name>-<version>` from `package.json`. If the symlink is missing (new machine, accidental deletion, or after a version bump):
 
 ```bash
 ln -s ~/Dev/vscode-extensions/markdown-preview-styles \
@@ -30,9 +24,10 @@ Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`)
 
 ## Related VS Code settings
 
-The extension's defaults assume a few preview settings. Only `breaks` differs from VS Code's stock defaults; the others are noted for awareness:
+The extension's defaults assume a few preview settings. Only `breaks` and `frontMatter` differ from VS Code's stock defaults; the others are noted for awareness:
 
-- `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines (Obsidian-style). Without this, a single newline collapses into a space within the same paragraph.
+- `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines. Without this, a single newline collapses into a space within the same paragraph.
+- `"markdown.preview.frontMatter": "hide"` - VS Code's stock default is `table`, its own frontmatter table. Anything but `hide` renders VS Code's version (table or code block) as well as the extension's Properties table, so the frontmatter shows twice.
 - `"markdown.preview.lineHeight": 1.7` - the reference pairing for the bundled body face (iA Writer Quattro reads best a touch looser than the 1.6 stock default). Note `.mps-blank-line` is calibrated to `1.06lh` against 1.6; values further from that shift the gutter rhythm.
 - `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `rem`/`em`-based type and spacing in `style.css` scale with whatever you set here.
 - `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
@@ -48,13 +43,13 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 
 - Caps preview width at 880px and left-aligns content (no centring).
 - Lets wide **code blocks** and **tables** break out of that column into the free space to their right - sizing to their content, capped at the window edge - so long code lines and many-column tables aren't squashed to the prose measure. Content that already fits, and code/tables nested in callouts or lists, are untouched.
-- Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
+- Removes the default `border-bottom` under `h1` and `h2` for a flat-heading look.
 - Headings render in **Martian Mono Light** (bundled, SIL OFL 1.1 - `fonts/OFL-martian-mono.txt`), a light monospace display treatment: weight 300, a full heading scale (`h1` 40px down to `h6` 12px at the default root), theme-default colour. Body prose renders in **iA Writer Quattro** (bundled, SIL OFL 1.1 - `fonts/OFL-ia-writer-quattro.txt`, the variable cuts) - note this deliberately overrides the `markdown.preview.fontFamily` setting. All the knobs (faces, weight, tracking, sizes) are CSS custom properties in the typography block at the top of `style.css`.
 - Replaces VS Code's source-line hover indicator with permanent 1-indexed line numbers in a 4em left gutter; numbers also appear next to blank source lines.
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
 - Inline code (backtick-quoted spans) shrunk to `0.9em`. Fenced code blocks inside `<pre>` are untouched.
 - Renders YAML frontmatter as a Properties table with type-aware icons (text / list / tags / date / datetime / checkbox) and pill chips for `tags` and string arrays. Non-editable (v1).
-- Resolves `[[wiki-links]]` against a **workspace-wide index** of every `.md` file under the open folders (plus any extra roots configured via `markdownPreviewStyles.wikilinks.extraIndexRoots`). Case-insensitive basename match; shortest-path tiebreak on collision. Supports the full Obsidian/Foam syntax matrix - see [Wikilink syntax](#wikilink-syntax) below.
+- Resolves `[[wiki-links]]` against a **workspace-wide index** of every `.md` file under the open folders, plus any extra roots configured in settings. Supports the full Obsidian/Foam syntax matrix - see Wikilink syntax below for the forms and resolution rules.
 - Renders Obsidian-style image embeds (`![[image.png]]`, with optional `![[image.png|N]]` for a px width). Bare filenames are retried under `attachments/` on first error. Failed loads show a dashed placeholder with the original path.
 - Renders `![[note]]` (non-image) embeds **inline** as transclusions - the referenced note's body (frontmatter stripped) renders inside an `mps-embed-note` container. Optional `#heading` or `^block` fragment narrows the embed to that section. Recursive embeds are capped at depth 2 to prevent cycles.
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
@@ -67,7 +62,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 | `[[name]]` | Link to `name.md` (resolved workspace-wide by basename). |
 | `[[name\|alias]]` | Link to `name.md`, displaying `alias`. Pipe-after-name (Obsidian/Foam convention - not GitHub Wiki's pipe-before-name). |
 | `[[name#heading]]` | Link to `name.md` and scroll to `#heading`. |
-| `[[name^block]]` | Link to `name.md` and scroll to the paragraph or list-item carrying a trailing `^block` marker. |
+| `[[name^block]]` | Link to `name.md` and scroll to the `^block`-marked paragraph or list item. |
 | `[[name#heading\|alias]]` | Combined - canonical fragment-before-pipe order. |
 | `![[image.png]]` | Inline image (with optional `\|N` for width). |
 | `![[name]]` | Inline transclusion of the referenced note's body. |
@@ -103,8 +98,7 @@ Date-only values are formatted without timezone shift so the day always matches 
 - **Workspace index is built asynchronously on activation.** Open previews are refreshed automatically once the index finishes building, but there's a brief window where wikilinks render with document-relative hrefs before the refresh fires.
 - **Watcher behaviour on iCloud-synced roots is noisy.** If you point `extraIndexRoots` at an iCloud folder, the file watcher fires on sync events as well as edits. Index correctness is unaffected; CPU may briefly spike on heavy sync activity.
 - **Wiki-link `<a>` clicks go through VS Code's webview link handler.** Non-existent targets (no index match and no document-relative file) surface a "file not found" toast rather than navigating anywhere - no in-preview broken-link styling.
-- **Cross-root collision ordering.** When two indexed roots both contain a file with the same basename, the resolver orders entries alphabetically by root path then by relative path. "Shortest path" only applies within a single root.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the reload-by-change-type matrix, architecture gotchas, tests, and project conventions.
+See [CLAUDE.md](https://github.com/samrobn/markdown-preview-styles/blob/main/CLAUDE.md) for the reload-by-change-type matrix, architecture gotchas, tests, and project conventions.
