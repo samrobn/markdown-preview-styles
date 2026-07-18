@@ -147,7 +147,9 @@ body {
    <aside>, so the combinator skips it regardless.
 
    No overflow rule: VS Code's own markdown.css already scrolls over-cap code
-   (`pre:not(.hljs)` and `pre.hljs code > div` both get `overflow: auto`), so
+   (`pre:not(.hljs)` - which in the 1.127 bundle is every pre, since the
+   hljs class lands on the inner <code>, never the pre - gets
+   `overflow: auto`), so
    adding `overflow-x` here only duplicates that and needlessly turns the pre
    into a scroll container. Capping the width is enough; VS Code handles the
    scroll. (The gutter number that overflow would clip off the inner <code>
@@ -383,8 +385,9 @@ body p.code-line:empty:has(+ .mps-embed-note)::before {
    overflow: auto on pre:not(.hljs)). preview.js mirrors the line onto the
    <pre> as .mps-pre-line + data-mps-line, and the shared gutter rule above
    renders the block's single number there. The inner number is suppressed
-   outright so contexts whose overflow doesn't clip (live pre.hljs scrolls
-   an inner div, not the pre) can't render a duplicate.
+   outright so any context whose overflow doesn't clip it can't render a
+   duplicate (in the 1.127 bundle the hljs class lands on the inner <code>,
+   never the pre - markdown.css's pre.hljs arms are legacy).
 
    The pre must stay position: STATIC - do not give it a positioned context.
    A positioned pre becomes its own ::before's containing block, and its
