@@ -55,6 +55,7 @@ The extension's defaults assume a few preview settings. `breaks` and `frontMatte
 - Add `mps-hide: true` to a file's frontmatter to suppress the Properties table for that file.
 - Makes **task-list checkboxes clickable in the preview**: clicking a rendered `- [ ]` / `- [x]` checkbox flips the marker on the source line (and saves, when the document had no unsaved changes). Requires an extension that renders task-list checkboxes in the preview (e.g. Markdown All in One) - this extension makes existing checkboxes interactive rather than rendering its own. Checkboxes are also keyboard-operable (Tab to one, Enter toggles). The click routes through a `vscode://` deep link; VS Code asks once per machine to allow the extension to handle its URIs.
 - Works around [an upstream VS Code bug](https://github.com/microsoft/vscode/issues/147718) where revisiting a preview tab shows stale content if the document changed while the tab was visible: the extension forces one preview refresh when a preview tab for a changed document becomes active.
+- Works around [another upstream bug](https://github.com/microsoft/vscode/issues/319080) where, in a split with a preview-as-editor tab, clicking into the text editor yanks its viewport to the preview's last scrolled line (losing the point just clicked): when a viewport jump right after a mouse click strands the clicked caret off-screen, the extension restores the pre-jump viewport. Keyboard flows ("Reopen Editor With Text Editor" landing at the preview's position) are untouched.
 
 ## Wikilink syntax
 
