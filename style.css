@@ -1,3 +1,67 @@
+/* =========================================================================
+   TYPOGRAPHY - the one place to tune the preview's type.
+
+   Headings get a monospace display treatment: Martian Mono ExtraLight
+   (bundled - SIL OFL 1.1, see fonts/OFL.txt; the Std-width 200-weight
+   static build), hairline weight at display sizes, light lavender on
+   dark themes. Tweak the custom properties below; the heading rules only
+   consume them.
+
+   Body text is deliberately NOT styled here - VS Code already exposes
+   markdown.preview.fontFamily / fontSize / lineHeight as user settings. */
+
+@font-face {
+  font-family: "Martian Mono";
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+  /* Resolves against this stylesheet's webview URI, so the bundled file
+     loads from the extension directory with no CSP work. */
+  src: url("./fonts/MartianMono-StdxLt.woff2") format("woff2");
+}
+
+:root {
+  --mps-heading-font: "Martian Mono", ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
+  --mps-heading-weight: 200;
+  /* Martian Mono is already wide - keep the tracking gentler than a
+     typical display-mono squeeze. */
+  --mps-heading-tracking: -0.02em;
+  --mps-heading-line-height: 1.1;
+  /* ~54px at the preview's default 14px root; rem so it tracks the
+     markdown.preview.fontSize setting. */
+  --mps-h1-size: 3.857rem;
+  /* Light lavender for the display face on dark themes. */
+  --mps-heading-color-dark: #d5dcff;
+}
+
+body h1,
+body h2,
+body h3,
+body h4,
+body h5,
+body h6 {
+  font-family: var(--mps-heading-font);
+  font-weight: var(--mps-heading-weight);
+  letter-spacing: var(--mps-heading-tracking);
+  line-height: var(--mps-heading-line-height);
+}
+
+body h1 {
+  font-size: var(--mps-h1-size);
+}
+
+body.vscode-dark h1,
+body.vscode-dark h2,
+body.vscode-dark h3,
+body.vscode-dark h4,
+body.vscode-dark h5,
+body.vscode-dark h6 {
+  color: var(--mps-heading-color-dark);
+}
+
+/* ========================================================================= */
+
 .markdown-body,
 body {
   max-width: 880px;

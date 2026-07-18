@@ -76,7 +76,12 @@ function render(srcPath) {
   md.use(pluginSourceMap);
   const src = fs.readFileSync(srcPath, 'utf8');
   const body = md.render(src);
-  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  // style.css is inlined into out.html (test/visual/), which moves the base
+  // URL two levels down from the repo root - so the @font-face's relative
+  // "./fonts/..." would 404 here while working live (VS Code resolves it
+  // against the stylesheet's own webview URI). Re-point it at the repo root.
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')
+    .replace(/url\("\.\/fonts\//g, 'url("../../fonts/');
   const previewJs = fs.readFileSync(path.join(ROOT, 'preview.js'), 'utf8');
   // Approximate VS Code preview defaults: dark background. style.css's own
   // body `padding-left: 5em` (applied above) gives the gutter ::before its
@@ -374,6 +379,31 @@ const PAGE_ASSERTIONS = `(() => {
     results.push({ label: 'wide table breaks out past the column', ok: false, reason: 'no body table or .markdown-body to measure' });
   }
 
+  // Heading typography: the bundled Martian Mono must actually LOAD (a
+  // computed font-family reports the specified stack whether or not the
+  // woff2 resolved - fonts.check is the only load-proving signal), and the
+  // heading rules must consume the custom properties (weight 200, ~54px h1
+  // at the 14px root, lavender on vscode-dark).
+  const h1 = document.querySelector('.markdown-body h1');
+  if (h1) {
+    const h1Style = getComputedStyle(h1);
+    const h1Px = parseFloat(h1Style.fontSize);
+    results.push({
+      label: 'heading font: Martian Mono loads and applies',
+      ok: document.fonts.check('200 1em "Martian Mono"') &&
+          h1Style.fontFamily.includes('Martian Mono') &&
+          h1Style.fontWeight === '200' &&
+          h1Px > 52 && h1Px < 56 &&
+          h1Style.color === 'rgb(213, 220, 255)',
+      actual: 'loaded=' + document.fonts.check('200 1em "Martian Mono"') +
+        ' family=' + h1Style.fontFamily.split(',')[0] +
+        ' weight=' + h1Style.fontWeight + ' size=' + h1Style.fontSize +
+        ' color=' + h1Style.color,
+    });
+  } else {
+    results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1 in .markdown-body' });
+  }
+
   return JSON.stringify(results);
 })()`;
 
@@ -393,6 +423,9 @@ function check(outPath) {
   // mid-settle (fonts loading, broken-image placeholders swapping in) and
   // the observer only converges it on the following frames.
   const readyProbe = `(() => {
+    // The typography assertion needs the bundled woff2 resolved, and early
+    // gutter passes measure mid-font-swap anyway - wait for all font loads.
+    if (document.fonts.status !== 'loaded') return false;
     const li = document.querySelector('li.code-line[data-mps-list-depth="3"]');
     if (!li || !li.style.getPropertyValue('--mps-before-left')) return false;
     const pre = document.querySelector('.markdown-body > pre.mps-pre-line');
