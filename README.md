@@ -33,8 +33,8 @@ Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`)
 The extension's defaults assume a few preview settings. Only `breaks` differs from VS Code's stock defaults; the others are noted for awareness:
 
 - `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines (Obsidian-style). Without this, a single newline collapses into a space within the same paragraph.
-- `"markdown.preview.lineHeight": 1.6` *(default)* - `.mps-blank-line` is calibrated to `1.06lh` against this; changing it shifts the gutter rhythm.
-- `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `em`-based spacing in `style.css` scales with whatever you set here.
+- `"markdown.preview.lineHeight": 1.7` - the reference pairing for the bundled body face (iA Writer Quattro reads best a touch looser than the 1.6 stock default). Note `.mps-blank-line` is calibrated to `1.06lh` against 1.6; values further from that shift the gutter rhythm.
+- `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `rem`/`em`-based type and spacing in `style.css` scale with whatever you set here.
 - `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
 - `"markdown.preview.markEditorSelection": true` *(default)* - shows the editor-caret line in the preview. The hover-indicator variant is suppressed (line numbers occupy that pseudo-element); the active-line is instead highlighted by brightening its gutter line number, same convention as the editor.
 - `"markdown.preview.doubleClickToSwitchToEditor": false` - VS Code defaults this to `true`; disable if you'd rather double-click select text in the preview than jump back to the editor. The visible line-number gutter still lets you eyeball the source row.
