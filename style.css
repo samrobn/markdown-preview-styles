@@ -708,6 +708,16 @@ body table:not(.mps-properties-table) tbody tr {
   width: 100%;
 }
 
+/* VS Code's rendered diff (SCM side-by-side preview) renders its own
+   frontmatter <table class="frontmatter"> - the normal preview hides
+   frontmatter, so this only ever appears in diff panes. It duplicates
+   the Properties table above and, unlike ours, shows the diff marker
+   spans as escaped literal text. Suppress it; ours is the one styled
+   and marker-stripped. */
+.markdown-body table.frontmatter {
+  display: none;
+}
+
 .mps-properties-table td {
   border: 0;
   padding: 0.35em 0.6em 0.35em 0;
@@ -946,6 +956,19 @@ body .mps-embed-cycle {
   .markdown-body > pre,
   .markdown-body > table:not(.mps-properties-table) {
     max-width: calc(100vw - 6rem);
+  }
+  /* The Properties key column (fixed 180px, nowrap) would leave the
+     value column a couple of characters wide here - values shatter one
+     character per line. Stack key over value instead. */
+  .mps-properties-table tr {
+    display: block;
+    padding: 0.15em 0;
+  }
+  .mps-properties-table td {
+    display: block;
+    padding: 0.05em 0;
+    width: auto;
+    min-width: 0;
   }
   /* min() against vw so the step-down tracks the pane, not the font
      setting - rem alone outgrows a narrow pane again as soon as

@@ -540,6 +540,7 @@ const PAGE_ASSERTIONS = `(() => {
       ['wide-content cap uses 6rem reserve', '6rem'],
       ['h1 step-down width-coupled', '--mps-h1-size: min(1.714rem, 8.5vw)'],
       ['h4 step avoids h5 collision', '--mps-h4-size: min(1.071rem, 5.5vw)'],
+      ['properties rows stack', '.mps-properties-table tr'],
     ];
     for (const [what, needle] of wanted) {
       results.push({ label: 'narrow gate: ' + what, ok: gateCss.includes(needle), needle });
