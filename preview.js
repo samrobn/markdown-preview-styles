@@ -208,6 +208,20 @@
         }
         if (!img.classList.contains('mps-broken')) {
           img.classList.add('mps-broken');
+          // Chromium renders its native [glyph][alt] fallback with no gap,
+          // and both halves are anonymous internals no CSS box can separate
+          // (word-spacing is inert; a spacer ::before lands before the
+          // glyph; a leading space in alt renders only when set AFTER the
+          // placeholder has painted - set during this error handler it
+          // collapses). Instead: blank the alt, which collapses the native
+          // fallback entirely, and let CSS draw the placeholder - ::before
+          // icon + ::after filename from data-mps-alt, spaced by margin.
+          const altText = (img.getAttribute('alt') || '').trim();
+          if (altText) {
+            img.setAttribute('data-mps-alt', altText);
+            img.setAttribute('aria-label', altText);
+          }
+          img.setAttribute('alt', '');
         }
       }
 
@@ -251,6 +265,13 @@
         img.removeAttribute('data-mps-wired');
         img.removeAttribute('data-mps-fallback-tried');
         img.classList.remove('mps-broken');
+        // Un-blank the alt the broken path cleared, so the replacement
+        // image carries its proper alt text again.
+        if (img.hasAttribute('data-mps-alt')) {
+          img.setAttribute('alt', img.getAttribute('data-mps-alt'));
+          img.removeAttribute('data-mps-alt');
+          img.removeAttribute('aria-label');
+        }
       }
     }
   }

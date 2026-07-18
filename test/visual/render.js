@@ -26,7 +26,32 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MarkdownIt = require('markdown-it');
+const hljs = require('highlight.js');
 const ours = require(path.join(ROOT, 'extension.js'));
+
+// Mirror VS Code's fence highlighting (markdown-language-features 1.127
+// bundle): the engine's highlight option returns hljs.highlight(...).value
+// (raw spans, no wrapper), and a renderer wrapper attrJoins class "hljs"
+// onto the fence token - markdown-it renders fence-token attrs on the
+// inner <code>, so live fences are <pre><code class="hljs language-x">.
+// The pre itself never carries .hljs in this build, so markdown.css's
+// pre:not(.hljs) padding arm styles every pre.
+const vscodeHighlight = (code, lang) => {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    } catch { /* fall through to markdown-it's own escaping */ }
+  }
+  return '';
+};
+const pluginFenceHljsClass = (md) => {
+  const orig = md.renderer.rules.fence;
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    if (token.map && token.map.length) token.attrJoin('class', 'hljs');
+    return orig ? orig(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+  };
+};
 
 // Copied verbatim from microsoft/vscode markdownEngine.ts (MIT-licensed).
 // Keep in sync with upstream if VS Code's source-map plugin evolves.
@@ -71,12 +96,18 @@ function seedFixtureIndex() {
 
 function render(srcPath) {
   seedFixtureIndex();
-  const md = new MarkdownIt({ html: true, linkify: true });
+  const md = new MarkdownIt({ html: true, linkify: true, highlight: vscodeHighlight });
   ours.activate().extendMarkdownIt(md);
   md.use(pluginSourceMap);
+  md.use(pluginFenceHljsClass);
   const src = fs.readFileSync(srcPath, 'utf8');
   const body = md.render(src);
-  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  // style.css is inlined into out.html (test/visual/), which moves the base
+  // URL two levels down from the repo root - so the @font-face's relative
+  // "./fonts/..." would 404 here while working live (VS Code resolves it
+  // against the stylesheet's own webview URI). Re-point it at the repo root.
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8')
+    .replace(/url\("\.\/fonts\//g, 'url("../../fonts/');
   const previewJs = fs.readFileSync(path.join(ROOT, 'preview.js'), 'utf8');
   // Approximate VS Code preview defaults: dark background. style.css's own
   // body `padding-left: 5em` (applied above) gives the gutter ::before its
@@ -90,7 +121,10 @@ function render(srcPath) {
   // wrapper's children.
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-${css}
+/* This chrome-mirror block deliberately precedes the style.css block:
+   live, the webview defaults + markdown.css load BEFORE contributed
+   previewStyles, so our stylesheet's same-specificity overrides (e.g.
+   the body font) must also come later here or the cascade lies. */
 /* Match VS Code's preview root font-size (14px). The harness used to inherit
    the browser default 16px, which silently hid bugs caused by the
    discrepancy between hard-coded pixel offsets (preview.js GUTTER_TARGET)
@@ -112,17 +146,75 @@ body { padding-right: 26px; }
    dropped live - set it unitless so the harness exercises what VS Code
    actually serves. */
 html { --markdown-line-height: 1.6; }
+/* Mirror the theme variables the live webview injects (Dark Modern values).
+   Without them every var(--vscode-*) in style.css silently takes its
+   fallback - links and wiki-links flattened to body-text grey in out.html
+   while rendering blue live, which misreports colour fidelity. Keep this
+   list in sync with the --vscode-* vars style.css consumes. */
+html {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: rgba(204, 204, 204, 0.7);
+  --vscode-textLink-foreground: #4daafc;
+  --vscode-badge-background: #616161;
+  --vscode-badge-foreground: #f8f8f8;
+  --vscode-charts-green: #89d185;
+  --vscode-editorLineNumber-foreground: #858585;
+  --vscode-editorLineNumber-activeForeground: #c6c6c6;
+  --vscode-editorWidget-background: #202020;
+  --vscode-editorWidget-border: #454545;
+  --vscode-errorForeground: #f48771;
+  --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  --vscode-editor-font-family: Menlo, Monaco, "Courier New", monospace;
+  --vscode-editor-foreground: #cccccc;
+  --vscode-textCodeBlock-background: rgba(255, 255, 255, 0.04);
+  --vscode-widget-border: rgba(255, 255, 255, 0.07);
+  --vscode-textPreformat-foreground: #d0d0d0;
+  --vscode-textPreformat-background: #3c3c3c;
+}
+/* Mirror the webview host's DEFAULT stylesheet (browser/pre/index.html),
+   which loads before any extension CSS in every webview - it's what gives
+   inline code its chip. Dark Modern values for the two tokens above. */
+code {
+  color: var(--vscode-textPreformat-foreground);
+  background-color: var(--vscode-textPreformat-background);
+  padding: 1px 3px;
+  border-radius: 4px;
+}
+pre code { padding: 0; }
 body { line-height: var(--markdown-line-height, 22px); }
 ul, ol { padding-inline-start: 30px; }
-/* Mirror VS Code's markdown.css, which our style.css deliberately leaves to
-   it: plain code blocks scroll over-cap content. (Highlighted blocks scroll on
-   an inner code>div the harness doesn't build, so plain is the case we mirror.)
-   Without this the harness wouldn't represent the live over-cap scroll, now
-   that style.css adds no overflow of its own. */
-pre:not(.hljs) { overflow: auto; }
+/* Mirror VS Code's markdown.css code-block chrome, which our style.css
+   deliberately leaves to it (padding/radius/overflow, panel background,
+   editor-font code). In the 1.127 bundle the hljs class lands on the inner
+   <code> (fence-token attrs), never the <pre>, so the pre:not(.hljs) arm
+   styles every pre - including the over-cap scroll the width tests need. */
+code {
+  font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, Menlo, monospace);
+  font-size: 1em;
+  line-height: 1.357em;
+}
+pre:not(.hljs),
+pre.hljs code > div {
+  padding: 16px;
+  border-radius: 3px;
+  overflow: auto;
+}
+pre code {
+  display: inline-block;
+  color: var(--vscode-editor-foreground);
+  tab-size: 4;
+  background: none;
+}
+pre {
+  background-color: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-widget-border);
+}
 /* Match VS Code's preview: every .code-line is position: relative so its
    ::before is contained within its own box, not the document body. */
 .code-line { position: relative; }
+</style><style>
+${css}
 </style></head>
 <body class="vscode-dark">
 <div class="markdown-body" dir="auto">
@@ -374,6 +466,47 @@ const PAGE_ASSERTIONS = `(() => {
     results.push({ label: 'wide table breaks out past the column', ok: false, reason: 'no body table or .markdown-body to measure' });
   }
 
+  // Heading typography: the bundled Martian Mono must actually LOAD (a
+  // computed font-family reports the specified stack whether or not the
+  // woff2 resolved - fonts.check is the only load-proving signal), and the
+  // heading rules must consume the custom properties (weight 300, 40px h1 /
+  // 24px h2 at the 14px root; colour stays the theme default).
+  const h1 = document.querySelector('.markdown-body h1');
+  const h2 = document.querySelector('.markdown-body h2');
+  if (h1 && h2) {
+    const h1Style = getComputedStyle(h1);
+    const h1Px = parseFloat(h1Style.fontSize);
+    const h2Px = parseFloat(getComputedStyle(h2).fontSize);
+    results.push({
+      label: 'heading font: Martian Mono loads and applies',
+      ok: document.fonts.check('300 1em "Martian Mono"') &&
+          h1Style.fontFamily.includes('Martian Mono') &&
+          h1Style.fontWeight === '300' &&
+          h1Px > 39 && h1Px < 41 &&
+          h2Px > 23 && h2Px < 25 &&
+          h1Style.color === getComputedStyle(document.body).color,
+      actual: 'loaded=' + document.fonts.check('300 1em "Martian Mono"') +
+        ' family=' + h1Style.fontFamily.split(',')[0] +
+        ' weight=' + h1Style.fontWeight + ' h1=' + h1Style.fontSize +
+        ' h2=' + h2Px + 'px color=' + h1Style.color,
+    });
+  } else {
+    results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1/h2 in .markdown-body' });
+  }
+
+  // Body prose font: Quattro must load and win the cascade over the
+  // chrome-mirror's body rule (style.css loads after markdown.css live -
+  // the harness mirrors that order; a regression here means the blocks
+  // got reordered).
+  const bodyFamily = getComputedStyle(document.body).fontFamily;
+  results.push({
+    label: 'body font: iA Writer Quattro loads and applies',
+    ok: document.fonts.check('1em "iA Writer Quattro"') &&
+        bodyFamily.includes('iA Writer Quattro'),
+    actual: 'loaded=' + document.fonts.check('1em "iA Writer Quattro"') +
+      ' family=' + bodyFamily.split(',')[0],
+  });
+
   return JSON.stringify(results);
 })()`;
 
@@ -393,6 +526,9 @@ function check(outPath) {
   // mid-settle (fonts loading, broken-image placeholders swapping in) and
   // the observer only converges it on the following frames.
   const readyProbe = `(() => {
+    // The typography assertion needs the bundled woff2 resolved, and early
+    // gutter passes measure mid-font-swap anyway - wait for all font loads.
+    if (document.fonts.status !== 'loaded') return false;
     const li = document.querySelector('li.code-line[data-mps-list-depth="3"]');
     if (!li || !li.style.getPropertyValue('--mps-before-left')) return false;
     const pre = document.querySelector('.markdown-body > pre.mps-pre-line');
