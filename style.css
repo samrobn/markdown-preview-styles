@@ -3,9 +3,8 @@
 
    Headings get a monospace display treatment: Martian Mono ExtraLight
    (bundled - SIL OFL 1.1, see fonts/OFL.txt; the Std-width 200-weight
-   static build), hairline weight at display sizes, light lavender on
-   dark themes. Tweak the custom properties below; the heading rules only
-   consume them.
+   static build), hairline weight at display sizes, theme-default colour.
+   Tweak the custom properties below; the heading rules only consume them.
 
    Body text is deliberately NOT styled here - VS Code already exposes
    markdown.preview.fontFamily / fontSize / lineHeight as user settings. */
@@ -28,11 +27,14 @@
      typical display-mono squeeze. */
   --mps-heading-tracking: -0.02em;
   --mps-heading-line-height: 1.1;
-  /* ~54px at the preview's default 14px root; rem so it tracks the
-     markdown.preview.fontSize setting. */
-  --mps-h1-size: 3.857rem;
-  /* Light lavender for the display face on dark themes. */
-  --mps-heading-color-dark: #d5dcff;
+  /* Sizes in rem so they track the markdown.preview.fontSize setting;
+     px equivalents assume the preview's default 14px root. */
+  --mps-h1-size: 2.857rem; /* 40px */
+  --mps-h2-size: 1.714rem; /* 24px */
+  --mps-h3-size: 1.357rem; /* 19px */
+  --mps-h4-size: 1.143rem; /* 16px */
+  --mps-h5-size: 1rem;     /* 14px */
+  --mps-h6-size: 0.857rem; /* 12px */
 }
 
 body h1,
@@ -47,18 +49,12 @@ body h6 {
   line-height: var(--mps-heading-line-height);
 }
 
-body h1 {
-  font-size: var(--mps-h1-size);
-}
-
-body.vscode-dark h1,
-body.vscode-dark h2,
-body.vscode-dark h3,
-body.vscode-dark h4,
-body.vscode-dark h5,
-body.vscode-dark h6 {
-  color: var(--mps-heading-color-dark);
-}
+body h1 { font-size: var(--mps-h1-size); }
+body h2 { font-size: var(--mps-h2-size); }
+body h3 { font-size: var(--mps-h3-size); }
+body h4 { font-size: var(--mps-h4-size); }
+body h5 { font-size: var(--mps-h5-size); }
+body h6 { font-size: var(--mps-h6-size); }
 
 /* ========================================================================= */
 

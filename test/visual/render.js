@@ -382,26 +382,29 @@ const PAGE_ASSERTIONS = `(() => {
   // Heading typography: the bundled Martian Mono must actually LOAD (a
   // computed font-family reports the specified stack whether or not the
   // woff2 resolved - fonts.check is the only load-proving signal), and the
-  // heading rules must consume the custom properties (weight 200, ~54px h1
-  // at the 14px root, lavender on vscode-dark).
+  // heading rules must consume the custom properties (weight 200, 40px h1 /
+  // 24px h2 at the 14px root; colour stays the theme default).
   const h1 = document.querySelector('.markdown-body h1');
-  if (h1) {
+  const h2 = document.querySelector('.markdown-body h2');
+  if (h1 && h2) {
     const h1Style = getComputedStyle(h1);
     const h1Px = parseFloat(h1Style.fontSize);
+    const h2Px = parseFloat(getComputedStyle(h2).fontSize);
     results.push({
       label: 'heading font: Martian Mono loads and applies',
       ok: document.fonts.check('200 1em "Martian Mono"') &&
           h1Style.fontFamily.includes('Martian Mono') &&
           h1Style.fontWeight === '200' &&
-          h1Px > 52 && h1Px < 56 &&
-          h1Style.color === 'rgb(213, 220, 255)',
+          h1Px > 39 && h1Px < 41 &&
+          h2Px > 23 && h2Px < 25 &&
+          h1Style.color === getComputedStyle(document.body).color,
       actual: 'loaded=' + document.fonts.check('200 1em "Martian Mono"') +
         ' family=' + h1Style.fontFamily.split(',')[0] +
-        ' weight=' + h1Style.fontWeight + ' size=' + h1Style.fontSize +
-        ' color=' + h1Style.color,
+        ' weight=' + h1Style.fontWeight + ' h1=' + h1Style.fontSize +
+        ' h2=' + h2Px + 'px color=' + h1Style.color,
     });
   } else {
-    results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1 in .markdown-body' });
+    results.push({ label: 'heading font: Martian Mono loads and applies', ok: false, reason: 'no h1/h2 in .markdown-body' });
   }
 
   return JSON.stringify(results);

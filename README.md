@@ -49,7 +49,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 - Caps preview width at 880px and left-aligns content (no centring).
 - Lets wide **code blocks** and **tables** break out of that column into the free space to their right - sizing to their content, capped at the window edge - so long code lines and many-column tables aren't squashed to the prose measure. Content that already fits, and code/tables nested in callouts or lists, are untouched.
 - Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
-- Headings render in **Martian Mono ExtraLight** (bundled, SIL OFL 1.1 - `fonts/OFL.txt`), a hairline monospace display treatment: weight 200, `h1` at ~54px, light lavender on dark themes. All the knobs (face, weight, tracking, sizes, colour) are CSS custom properties in the typography block at the top of `style.css`.
+- Headings render in **Martian Mono ExtraLight** (bundled, SIL OFL 1.1 - `fonts/OFL.txt`), a hairline monospace display treatment: weight 200, a full heading scale (`h1` 40px down to `h6` 12px at the default root), theme-default colour. All the knobs (face, weight, tracking, sizes) are CSS custom properties in the typography block at the top of `style.css`.
 - Replaces VS Code's source-line hover indicator with permanent 1-indexed line numbers in a 4em left gutter; numbers also appear next to blank source lines.
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
 - Inline code (backtick-quoted spans) shrunk to `0.9em`. Fenced code blocks inside `<pre>` are untouched.
