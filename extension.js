@@ -879,6 +879,101 @@ function initStaleRefresh(context) {
   }
 }
 
+// ---- Click-snap guard (upstream vscode#319080) ------------------------------
+//
+// The static preview (vscode.markdown.preview.editor - what editorAssociations
+// opens) does not live-sync the text editor while the preview scrolls. Instead
+// markdown-language-features stores the preview's topmost line per document
+// and replays it into the text editor later - on editor activation, and on
+// click-triggered paths that can land seconds after the click (2.3s observed).
+// In a split (text editor beside a static preview), clicking into the editor
+// therefore teleports the viewport to the preview's line, losing the point
+// just clicked. The stored line is never cleared, so a stale scroll re-fires
+// long after. Verified against a scratch profile with no extensions; gated
+// upstream by markdown.preview.scrollEditorWithPreview, but disabling that
+// kills preview scroll sync wholesale - hence this narrower counter.
+//
+// Mitigation: a MOUSE selection change in a markdown text editor (i.e. a
+// click) arms a short watch. While armed, the viewport top is tracked per
+// visible-range event; an event that (a) teleports the top by more than a
+// viewport's worth in one step - real scrolling streams small per-frame
+// steps - and (b) strands the clicked caret off-screen - legitimate
+// navigations (outline, go-to) move the caret with the viewport - is judged
+// to be the upstream snap, and the pre-teleport viewport is restored.
+// Keyboard-driven flows (tab switch, "Reopen Editor With Text Editor") never
+// arm, so the designed "text editor opens at the preview's position"
+// behaviour is untouched. One restore per click; a click followed within the
+// window by a full-page scrollbar yank is the known residual (countered
+// once, then disarmed).
+
+const SNAP_GUARD_WINDOW_MS = 4000;
+const SNAP_GUARD_MIN_TELEPORT_LINES = 50;
+const _clickSnapGuard = { armed: null };
+
+function caretVisible(ranges, caret) {
+  return (ranges || []).some(range => range.contains(caret));
+}
+
+// Any selection change disarms first: a non-mouse change (typing, arrow
+// keys) means the click interaction is over and a stale guard must not fire.
+function guardClickSnapOnMouseSelection(state, event, now, deps) {
+  state.armed = null;
+  if (event.kind !== deps.mouseKind) return;
+  const editor = event.textEditor;
+  if (!editor.document || editor.document.languageId !== 'markdown') return;
+  const ranges = editor.visibleRanges;
+  if (!ranges || !ranges.length) return;
+  const caret = event.selections[0].active;
+  if (!caretVisible(ranges, caret)) {
+    // The snap was applied before this notification reached us - the click's
+    // target is already off-screen and the pre-jump viewport is unknowable,
+    // so centre the caret instead of restoring.
+    editor.revealRange(deps.makeRange(caret), deps.revealCenterIfOutside);
+    return;
+  }
+  state.armed = {
+    editor,
+    caret,
+    lastTop: ranges[0].start,
+    until: now + SNAP_GUARD_WINDOW_MS,
+  };
+}
+
+function restoreClickSnapOnVisibleRangesChange(state, event, now, deps) {
+  const armed = state.armed;
+  if (!armed || event.textEditor !== armed.editor) return;
+  if (now > armed.until) { state.armed = null; return; }
+  const ranges = event.visibleRanges;
+  if (!ranges || !ranges.length) return;
+  const newTop = ranges[0].start;
+  const viewportSpan = ranges[ranges.length - 1].end.line - newTop.line;
+  const step = Math.abs(newTop.line - armed.lastTop.line);
+  const teleported = step > Math.max(SNAP_GUARD_MIN_TELEPORT_LINES, viewportSpan);
+  if (teleported && !caretVisible(ranges, armed.caret)) {
+    state.armed = null; // one restore per click
+    event.textEditor.revealRange(deps.makeRange(armed.lastTop), deps.revealAtTop);
+    return;
+  }
+  armed.lastTop = newTop;
+}
+
+function initClickSnapGuard(context) {
+  const vscode = requireVscode();
+  if (!vscode || !vscode.window.onDidChangeTextEditorVisibleRanges) return;
+  const deps = {
+    mouseKind: vscode.TextEditorSelectionChangeKind.Mouse,
+    makeRange: (position) => new vscode.Range(position, position),
+    revealAtTop: vscode.TextEditorRevealType.AtTop,
+    revealCenterIfOutside: vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection(event =>
+      guardClickSnapOnMouseSelection(_clickSnapGuard, event, Date.now(), deps)),
+    vscode.window.onDidChangeTextEditorVisibleRanges(event =>
+      restoreClickSnapOnVisibleRangesChange(_clickSnapGuard, event, Date.now(), deps))
+  );
+}
+
 // Preview checkbox toggling. preview.js wraps each rendered task-list
 // checkbox in an anchor whose href is vscode://local.markdown-preview-styles
 // /toggle?doc=<uri>&line=<n>; a genuine click launches the protocol, VS Code
@@ -985,6 +1080,7 @@ function activate(context) {
       console.warn('markdown-preview-styles: index init failed', err)
     );
     initStaleRefresh(context);
+    initClickSnapGuard(context);
     initCheckboxToggle(context);
   }
   return {
@@ -1513,6 +1609,8 @@ exports.parseToggleDeepLink = parseToggleDeepLink;
 exports.markChangedDocument = markChangedDocument;
 exports.refreshStalePreviewOnTabActivation = refreshStalePreviewOnTabActivation;
 exports.refreshStalePreviewOnWindowFocus = refreshStalePreviewOnWindowFocus;
+exports.guardClickSnapOnMouseSelection = guardClickSnapOnMouseSelection;
+exports.restoreClickSnapOnVisibleRangesChange = restoreClickSnapOnVisibleRangesChange;
 exports.__setWikiStateForTest = __setWikiStateForTest;
 exports.__resetWikiStateForTest = __resetWikiStateForTest;
 // Exported for the concurrency test (rebuild generation guard). Takes the

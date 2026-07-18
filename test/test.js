@@ -22,6 +22,8 @@ const {
   refreshStalePreviewOnWindowFocus,
   flipTaskMarker,
   parseToggleDeepLink,
+  guardClickSnapOnMouseSelection,
+  restoreClickSnapOnVisibleRangesChange,
 } = require('../extension.js');
 
 // ---- Stub markdown-it -------------------------------------------------------
@@ -2089,6 +2091,139 @@ test('toggle deep link: preview.js builds the exact shape extension.js parses', 
   const encodedQuery = 'doc=' + encodeURIComponent(source) + '&line=' + encodeURIComponent(line);
   const parsed = parseToggleDeepLink('/toggle', decodeURIComponent(encodedQuery));
   assert.deepStrictEqual(parsed, { doc: source, line });
+});
+
+// ---- Click-snap guard (upstream vscode#319080) ------------------------------
+
+function lineRange(startLine, endLine) {
+  return {
+    start: { line: startLine },
+    end: { line: endLine },
+    contains: (position) => position.line >= startLine && position.line <= endLine,
+  };
+}
+
+function snapEditor(opts = {}) {
+  const editor = {
+    document: { languageId: opts.languageId || 'markdown' },
+    visibleRanges: opts.visibleRanges || [lineRange(0, 40)],
+    reveals: [],
+  };
+  editor.revealRange = (range, type) => editor.reveals.push({ range, type });
+  return editor;
+}
+
+const snapDeps = {
+  mouseKind: 2,
+  makeRange: (position) => ({ anchoredAt: position }),
+  revealAtTop: 'AtTop',
+  revealCenterIfOutside: 'InCenterIfOutsideViewport',
+};
+
+function mouseSelection(editor, line, kind = 2) {
+  return { textEditor: editor, kind, selections: [{ active: { line } }] };
+}
+
+function rangesEvent(editor, startLine, endLine) {
+  return { textEditor: editor, visibleRanges: [lineRange(startLine, endLine)] };
+}
+
+test('clickSnapGuard: mouse click arms with the click-time viewport top', () => {
+  const editor = snapEditor({ visibleRanges: [lineRange(14, 57)] });
+  const state = { armed: null };
+  guardClickSnapOnMouseSelection(state, mouseSelection(editor, 30), 1000, snapDeps);
+  assert.ok(state.armed, 'guard armed');
+  assert.strictEqual(state.armed.caret.line, 30);
+  assert.strictEqual(state.armed.lastTop.line, 14);
+  assert.strictEqual(state.armed.until, 5000);
+  assert.strictEqual(editor.reveals.length, 0, 'no reveal while the caret is still visible');
+});
+
+test('clickSnapGuard: non-mouse selection change disarms and never arms', () => {
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 3 } } };
+  guardClickSnapOnMouseSelection(state, mouseSelection(editor, 5, 1 /* keyboard */), 1000, snapDeps);
+  assert.strictEqual(state.armed, null, 'typing after a click clears the guard');
+});
+
+test('clickSnapGuard: non-markdown editors never arm', () => {
+  const editor = snapEditor({ languageId: 'javascript' });
+  const state = { armed: null };
+  guardClickSnapOnMouseSelection(state, mouseSelection(editor, 5), 1000, snapDeps);
+  assert.strictEqual(state.armed, null);
+});
+
+test('clickSnapGuard: snap landing before the selection event centres the caret immediately', () => {
+  // The upstream reveal already moved the viewport (caret off-screen by the
+  // time the selection notification arrives): restore target unknowable.
+  const editor = snapEditor({ visibleRanges: [lineRange(288, 331)] });
+  const state = { armed: null };
+  guardClickSnapOnMouseSelection(state, mouseSelection(editor, 30), 1000, snapDeps);
+  assert.strictEqual(state.armed, null);
+  assert.deepStrictEqual(editor.reveals,
+    [{ range: { anchoredAt: { line: 30 } }, type: 'InCenterIfOutsideViewport' }]);
+});
+
+test('clickSnapGuard: teleport stranding the caret restores the pre-jump viewport', () => {
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 30 }, lastTop: { line: 14 }, until: 5000 } };
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 288, 331), 3000, snapDeps);
+  assert.strictEqual(state.armed, null, 'one restore per click');
+  assert.deepStrictEqual(editor.reveals,
+    [{ range: { anchoredAt: { line: 14 } }, type: 'AtTop' }]);
+});
+
+test('clickSnapGuard: gradual scrolling within the window is left alone and tracked', () => {
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 30 }, lastTop: { line: 14 }, until: 5000 } };
+  // Stream of small steps (user wheel): caret drifts out of view, no restore.
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 24, 67), 1200, snapDeps);
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 44, 87), 1300, snapDeps);
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 64, 107), 1400, snapDeps);
+  assert.strictEqual(editor.reveals.length, 0, 'user scrolling never countered');
+  assert.ok(state.armed, 'guard still armed');
+  assert.strictEqual(state.armed.lastTop.line, 64, 'viewport top tracked per event');
+  // The snap now teleports from the TRACKED position: restore goes there,
+  // not back to the click-time viewport.
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 600, 643), 2000, snapDeps);
+  assert.deepStrictEqual(editor.reveals,
+    [{ range: { anchoredAt: { line: 64 } }, type: 'AtTop' }]);
+});
+
+test('clickSnapGuard: teleport that keeps the caret visible is a navigation, not a snap', () => {
+  // Outline clicks / go-to move caret and viewport together.
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 300 }, lastTop: { line: 14 }, until: 5000 } };
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 288, 331), 1200, snapDeps);
+  assert.strictEqual(editor.reveals.length, 0);
+});
+
+test('clickSnapGuard: small jump below the teleport threshold is not countered', () => {
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 15 }, lastTop: { line: 14 }, until: 5000 } };
+  // 45-line viewport, 46-line step: caret gone but the step is within one
+  // viewport - could be a fast flick frame.
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 60, 105), 1200, snapDeps);
+  assert.strictEqual(editor.reveals.length, 0);
+  assert.strictEqual(state.armed.lastTop.line, 60);
+});
+
+test('clickSnapGuard: events after the window expire disarm without countering', () => {
+  const editor = snapEditor();
+  const state = { armed: { editor, caret: { line: 30 }, lastTop: { line: 14 }, until: 5000 } };
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(editor, 288, 331), 9000, snapDeps);
+  assert.strictEqual(state.armed, null);
+  assert.strictEqual(editor.reveals.length, 0, 'late teleport is not ours to judge');
+});
+
+test('clickSnapGuard: another editor scrolling leaves the guard armed', () => {
+  const editor = snapEditor();
+  const other = snapEditor();
+  const armed = { editor, caret: { line: 30 }, lastTop: { line: 14 }, until: 5000 };
+  const state = { armed };
+  restoreClickSnapOnVisibleRangesChange(state, rangesEvent(other, 288, 331), 1200, snapDeps);
+  assert.strictEqual(state.armed, armed, 'guard survives unrelated scroll events');
+  assert.strictEqual(other.reveals.length, 0);
 });
 
 // ---- Summary ----------------------------------------------------------------
