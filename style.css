@@ -742,7 +742,7 @@ body .mps-embed-image.mps-broken {
   opacity: 0.7;
   color: var(--vscode-descriptionForeground, inherit);
   font-size: 0.85em;
-  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-family: "Martian Mono", var(--vscode-editor-font-family, ui-monospace, monospace);
 }
 
 /* Degraded embed: a non-image `![[name]]` that fell through to the
