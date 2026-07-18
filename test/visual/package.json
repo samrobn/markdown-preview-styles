@@ -2,6 +2,7 @@
   "private": true,
   "description": "Dev-only deps for visual verification of the markdown preview. Not shipped.",
   "devDependencies": {
+    "highlight.js": "^11.11.1",
     "markdown-it": "^14.0.0"
   }
 }

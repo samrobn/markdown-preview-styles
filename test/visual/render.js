@@ -26,7 +26,32 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MarkdownIt = require('markdown-it');
+const hljs = require('highlight.js');
 const ours = require(path.join(ROOT, 'extension.js'));
+
+// Mirror VS Code's fence highlighting (markdown-language-features 1.127
+// bundle): the engine's highlight option returns hljs.highlight(...).value
+// (raw spans, no wrapper), and a renderer wrapper attrJoins class "hljs"
+// onto the fence token - markdown-it renders fence-token attrs on the
+// inner <code>, so live fences are <pre><code class="hljs language-x">.
+// The pre itself never carries .hljs in this build, so markdown.css's
+// pre:not(.hljs) padding arm styles every pre.
+const vscodeHighlight = (code, lang) => {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    } catch { /* fall through to markdown-it's own escaping */ }
+  }
+  return '';
+};
+const pluginFenceHljsClass = (md) => {
+  const orig = md.renderer.rules.fence;
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    if (token.map && token.map.length) token.attrJoin('class', 'hljs');
+    return orig ? orig(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+  };
+};
 
 // Copied verbatim from microsoft/vscode markdownEngine.ts (MIT-licensed).
 // Keep in sync with upstream if VS Code's source-map plugin evolves.
@@ -71,9 +96,10 @@ function seedFixtureIndex() {
 
 function render(srcPath) {
   seedFixtureIndex();
-  const md = new MarkdownIt({ html: true, linkify: true });
+  const md = new MarkdownIt({ html: true, linkify: true, highlight: vscodeHighlight });
   ours.activate().extendMarkdownIt(md);
   md.use(pluginSourceMap);
+  md.use(pluginFenceHljsClass);
   const src = fs.readFileSync(srcPath, 'utf8');
   const body = md.render(src);
   // style.css is inlined into out.html (test/visual/), which moves the base
@@ -137,15 +163,38 @@ html {
   --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
   --vscode-font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   --vscode-editor-font-family: Menlo, Monaco, "Courier New", monospace;
+  --vscode-editor-foreground: #cccccc;
+  --vscode-textCodeBlock-background: rgba(255, 255, 255, 0.04);
+  --vscode-widget-border: rgba(255, 255, 255, 0.07);
 }
 body { line-height: var(--markdown-line-height, 22px); }
 ul, ol { padding-inline-start: 30px; }
-/* Mirror VS Code's markdown.css, which our style.css deliberately leaves to
-   it: plain code blocks scroll over-cap content. (Highlighted blocks scroll on
-   an inner code>div the harness doesn't build, so plain is the case we mirror.)
-   Without this the harness wouldn't represent the live over-cap scroll, now
-   that style.css adds no overflow of its own. */
-pre:not(.hljs) { overflow: auto; }
+/* Mirror VS Code's markdown.css code-block chrome, which our style.css
+   deliberately leaves to it (padding/radius/overflow, panel background,
+   editor-font code). In the 1.127 bundle the hljs class lands on the inner
+   <code> (fence-token attrs), never the <pre>, so the pre:not(.hljs) arm
+   styles every pre - including the over-cap scroll the width tests need. */
+code {
+  font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, Menlo, monospace);
+  font-size: 1em;
+  line-height: 1.357em;
+}
+pre:not(.hljs),
+pre.hljs code > div {
+  padding: 16px;
+  border-radius: 3px;
+  overflow: auto;
+}
+pre code {
+  display: inline-block;
+  color: var(--vscode-editor-foreground);
+  tab-size: 4;
+  background: none;
+}
+pre {
+  background-color: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-widget-border);
+}
 /* Match VS Code's preview: every .code-line is position: relative so its
    ::before is contained within its own box, not the document body. */
 .code-line { position: relative; }
