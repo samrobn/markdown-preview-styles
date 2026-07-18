@@ -252,6 +252,15 @@ body li + li {
   margin-top: 0.4em;
 }
 
+/* Group an introducing line with its list: a list separated from the text
+   above by one blank source line gets pulled up, so the gap below an intro
+   ("Things to do:") reads smaller than the gap above it. Placeholders are
+   only injected between top-level blocks, so nested lists are untouched;
+   the blank row keeps its full-height gutter number - only the list moves. */
+body .mps-blank-line + :where(ul, ol) {
+  margin-top: -0.5em;
+}
+
 /* Shrink inline code (backtick-quoted spans). Scoped to :not(pre) > code so
    fenced code blocks (inside <pre>) keep their normal size. */
 :not(pre) > code {
