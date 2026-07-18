@@ -32,7 +32,7 @@ Remove any older versioned symlinks (e.g. `local.markdown-preview-styles-0.0.1`)
 
 The extension's defaults assume a few preview settings. Only `breaks` differs from VS Code's stock defaults; the others are noted for awareness:
 
-- `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines (Obsidian-style). Without this, a single newline collapses into a space within the same paragraph.
+- `"markdown.preview.breaks": true` - renders consecutive source lines as separate lines. Without this, a single newline collapses into a space within the same paragraph.
 - `"markdown.preview.lineHeight": 1.7` - the reference pairing for the bundled body face (iA Writer Quattro reads best a touch looser than the 1.6 stock default). Note `.mps-blank-line` is calibrated to `1.06lh` against 1.6; values further from that shift the gutter rhythm.
 - `"markdown.preview.fontSize": 15` - this repo is calibrated at 15 (VS Code's stock default is 14). The `rem`/`em`-based type and spacing in `style.css` scale with whatever you set here.
 - `"markdown.preview.linkify": true` *(default)* - auto-links bare URLs in body text; complements our Properties-value URL linking.
@@ -48,7 +48,7 @@ The extension's defaults assume a few preview settings. Only `breaks` differs fr
 
 - Caps preview width at 880px and left-aligns content (no centring).
 - Lets wide **code blocks** and **tables** break out of that column into the free space to their right - sizing to their content, capped at the window edge - so long code lines and many-column tables aren't squashed to the prose measure. Content that already fits, and code/tables nested in callouts or lists, are untouched.
-- Removes the default `border-bottom` under `h1` and `h2` (Obsidian-style flat headings).
+- Removes the default `border-bottom` under `h1` and `h2` for a flat-heading look.
 - Headings render in **Martian Mono Light** (bundled, SIL OFL 1.1 - `fonts/OFL-martian-mono.txt`), a light monospace display treatment: weight 300, a full heading scale (`h1` 40px down to `h6` 12px at the default root), theme-default colour. Body prose renders in **iA Writer Quattro** (bundled, SIL OFL 1.1 - `fonts/OFL-ia-writer-quattro.txt`, the variable cuts) - note this deliberately overrides the `markdown.preview.fontFamily` setting. All the knobs (faces, weight, tracking, sizes) are CSS custom properties in the typography block at the top of `style.css`.
 - Replaces VS Code's source-line hover indicator with permanent 1-indexed line numbers in a 4em left gutter; numbers also appear next to blank source lines.
 - Default block margins on body content are zeroed so vertical spacing comes from blank-line placeholders - one source line ≈ one visual row, matching the editor's gutter rhythm.
