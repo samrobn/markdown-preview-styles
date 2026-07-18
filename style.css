@@ -728,10 +728,12 @@ body.vscode-high-contrast .mps-embed-image {
 }
 
 /* Broken-image fallback. preview.js adds .mps-broken after the <img> fires
-   `error` (post the attachments/ retry). The browser renders its native
-   broken-image glyph + the alt text (which extension.js sets to the
-   basename of the path); we add a dashed-box frame around that so it
-   reads as a deliberate placeholder rather than a render failure. */
+   `error` (post the attachments/ retry), blanks the alt (Chromium's native
+   [glyph][alt] fallback has no gap and neither half is CSS-addressable -
+   an empty alt collapses it entirely), and stashes the filename in
+   data-mps-alt. The placeholder is then fully ours: dashed box, ::before
+   image-off icon, ::after filename - spaced with margin-right on the icon
+   (flex/gap does not apply to an img's own pseudos). */
 body .mps-embed-image.mps-broken {
   display: inline-block;
   width: auto !important;
@@ -743,6 +745,27 @@ body .mps-embed-image.mps-broken {
   color: var(--vscode-descriptionForeground, inherit);
   font-size: 0.85em;
   font-family: "Martian Mono", var(--vscode-editor-font-family, ui-monospace, monospace);
+  --mps-image-off-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='2' y1='2' x2='22' y2='22'/><path d='M10.41 10.41a2 2 0 1 1-2.83-2.83'/><line x1='13.5' y1='13.5' x2='6' y2='21'/><line x1='18' y1='12' x2='21' y2='15'/><path d='M3.59 3.59A1.99 1.99 0 0 0 3 5v14a2 2 0 0 0 2 2h14c.55 0 1.052-.22 1.41-.59'/><path d='M21 15V5a2 2 0 0 0-2-2H9'/></svg>");
+}
+
+body .mps-embed-image.mps-broken::before {
+  content: '';
+  display: inline-block;
+  vertical-align: -0.15em;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.5em;
+  background-color: currentColor;
+  -webkit-mask-image: var(--mps-image-off-icon);
+  mask-image: var(--mps-image-off-icon);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+body .mps-embed-image.mps-broken::after {
+  content: attr(data-mps-alt);
 }
 
 /* Degraded embed: a non-image `![[name]]` that fell through to the
