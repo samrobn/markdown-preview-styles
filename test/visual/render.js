@@ -593,7 +593,15 @@ function check(outPath) {
   // agent-browser builds no longer decode. agent-browser prints the string
   // return value JSON-encoded, so the inner JSON.parse unwraps that quoting and
   // the outer one parses our results array.
-  const raw = execFileSync('agent-browser', ['eval', PAGE_ASSERTIONS]).toString();
+  let raw;
+  try {
+    raw = execFileSync('agent-browser', ['eval', PAGE_ASSERTIONS]).toString();
+  } catch (err) {
+    // A connected daemon serves the connected app instead of our page and
+    // the exec dies as a bare exit 1 (no stderr beyond a Node footer).
+    console.error('agent-browser exec failed - if it is connected to another app over CDP, run `agent-browser close` and retry.');
+    throw err;
+  }
   const results = JSON.parse(JSON.parse(raw));
   let pass = 0, fail = 0;
   console.log('\nVisual assertions:');
