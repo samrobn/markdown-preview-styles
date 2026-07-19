@@ -713,7 +713,9 @@ body table:not(.mps-properties-table) tbody tr {
    frontmatter, so this only ever appears in diff panes. It duplicates
    the Properties table above and, unlike ours, shows the diff marker
    spans as escaped literal text. Suppress it; ours is the one styled
-   and marker-stripped. */
+   and marker-stripped. Ceiling: an mps-hide: true doc shows NO
+   frontmatter in diffs at all (ours opts out, theirs is hidden) - scope
+   this with :has(.mps-properties) if that ever matters. */
 .markdown-body table.frontmatter {
   display: none;
 }
